@@ -1,0 +1,1133 @@
+// Sieger GCP Reseller Management Console
+// Enterprise B2B Billing System - PostgreSQL Schema
+// Phase 1: Foundation Layer + Phase 2: Billing Loop
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =============================================================================
+// CORE IDENTITY
+// =============================================================================
+
+/// System users - supports both internal admins and customer portal users
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  email          String    @unique @db.VarChar(255)
+  passwordHash   String    @map("password_hash") @db.VarChar(255)
+  firstName      String    @map("first_name") @db.VarChar(100)
+  lastName       String    @map("last_name") @db.VarChar(100)
+  isActive       Boolean   @default(true) @map("is_active")
+  lastLoginAt    DateTime? @map("last_login_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  userRoles               UserRole[]
+  userScopes              UserScope[]
+  auditLogs               AuditLog[]               @relation("AuditActor")
+  invoiceRuns             InvoiceRun[]             @relation("InvoiceRunCreator")
+  rawCostIngestionBatches RawCostIngestionBatch[]  @relation("IngestionCreator")
+  billingIngestionBatches BillingIngestionBatch[]  @relation("BillingIngestionCreator") // Phase 5
+  payments                Payment[]                @relation("PaymentRecorder") // Phase X
+
+  @@index([email])
+  @@index([isActive])
+  @@map("users")
+}
+
+/// Role definitions - super_admin, admin, finance, viewer, etc.
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique @db.VarChar(50)
+  description String?  @db.VarChar(255)
+  isSystem    Boolean  @default(false) @map("is_system") // Cannot be deleted
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+/// User-Role junction table
+model UserRole {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// =============================================================================
+// AUTHORIZATION - PERMISSIONS
+// =============================================================================
+
+/// Permission definitions - granular actions on resources
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  resource    String   @db.VarChar(50) // e.g., "customers", "invoices", "users"
+  action      String   @db.VarChar(50) // e.g., "create", "read", "update", "delete", "list"
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  rolePermissions RolePermission[]
+
+  @@unique([resource, action])
+  @@index([resource])
+  @@map("permissions")
+}
+
+/// Role-Permission junction table
+model RolePermission {
+  id           String   @id @default(uuid()) @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+// =============================================================================
+// DATA SCOPE ISOLATION
+// =============================================================================
+
+/// Scope types for data isolation
+enum ScopeType {
+  CUSTOMER   // Access to specific customer(s) data
+  BILLING    // Access to billing/invoice data
+  PROJECT    // Access to GCP project data (future)
+
+  @@map("scope_type")
+}
+
+/// User data scope assignments - controls what data a user can access
+model UserScope {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  scopeType ScopeType @map("scope_type")
+  scopeId   String    @map("scope_id") @db.Uuid // References customer_id, project_id, etc.
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, scopeType, scopeId])
+  @@index([userId])
+  @@index([scopeType, scopeId])
+  @@map("user_scopes")
+}
+
+// =============================================================================
+// CUSTOMER MASTER
+// =============================================================================
+
+/// Customer status enumeration
+enum CustomerStatus {
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+
+  @@map("customer_status")
+}
+
+/// Customer master table - GCP reseller customers
+model Customer {
+  id                   String         @id @default(uuid()) @db.Uuid
+  name                 String         @db.VarChar(255)
+  externalId           String?        @unique @map("external_id") @db.VarChar(100) // GCP customer ID
+  billingAccountId     String?        @map("billing_account_id") @db.VarChar(100) // GCP billing account (legacy field)
+  domain               String?        @db.VarChar(255)
+  status               CustomerStatus @default(ACTIVE)
+
+  // Billing configuration
+  currency             String         @default("USD") @db.VarChar(3)
+  paymentTermsDays     Int            @default(30) @map("payment_terms_days")
+
+  // Contact information (denormalized for simplicity)
+  primaryContactName   String?        @map("primary_contact_name") @db.VarChar(255)
+  primaryContactEmail  String?        @map("primary_contact_email") @db.VarChar(255)
+
+  // Audit fields
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  invoices             Invoice[]
+  configSnapshots      ConfigSnapshot[]
+  customerProjects     CustomerProject[]
+  pricingLists         PricingList[]
+  credits              Credit[] // Phase 3.3
+  specialRules         SpecialRule[] @relation("SpecialRuleCustomer") // Phase 3.5
+  specialRulesTargeted SpecialRule[] @relation("SpecialRuleTarget") // Phase 3.5: Rules that move costs TO this customer
+  // Phase 7: Analytics
+  billingMonthlySummaries BillingMonthlySummary[]
+  billingCustomerSnapshots BillingCustomerSnapshot[]
+
+  @@index([externalId])
+  @@index([status])
+  @@index([name])
+  @@map("customers")
+}
+
+// =============================================================================
+// BILLING ACCOUNTS & PROJECTS (Phase 2)
+// =============================================================================
+
+/// Billing account status
+enum BillingAccountStatus {
+  ACTIVE
+  SUSPENDED
+  UNKNOWN
+
+  @@map("billing_account_status")
+}
+
+/// GCP Billing Account - represents a billing account in GCP
+model BillingAccount {
+  id               String               @id @default(uuid()) @db.Uuid
+  billingAccountId String               @unique @map("billing_account_id") @db.VarChar(100) // GCP Billing Account ID
+  name             String?              @db.VarChar(255)
+  status           BillingAccountStatus @default(ACTIVE)
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  projects         Project[]
+
+  @@index([billingAccountId])
+  @@index([status])
+  @@map("billing_accounts")
+}
+
+/// Project status
+enum ProjectStatus {
+  ACTIVE
+  SUSPENDED
+  NOT_FOUND
+  NO_BILLING
+
+  @@map("project_status")
+}
+
+/// GCP Project - represents a project in GCP
+model Project {
+  id               String        @id @default(uuid()) @db.Uuid
+  projectId        String        @unique @map("project_id") @db.VarChar(100) // GCP Project ID
+  name             String?       @db.VarChar(255)
+  status           ProjectStatus @default(ACTIVE)
+  billingAccountId String?       @map("billing_account_id") @db.Uuid
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  billingAccount   BillingAccount?   @relation(fields: [billingAccountId], references: [id], onDelete: SetNull)
+  customerProjects CustomerProject[]
+
+  @@index([projectId])
+  @@index([billingAccountId])
+  @@index([status])
+  @@map("projects")
+}
+
+/// Customer to Project mapping with history support
+model CustomerProject {
+  id         String    @id @default(uuid()) @db.Uuid
+  customerId String    @map("customer_id") @db.Uuid
+  projectId  String    @map("project_id") @db.Uuid
+  startDate  DateTime? @map("start_date") @db.Date
+  endDate    DateTime? @map("end_date") @db.Date
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  project  Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([customerId, projectId, startDate])
+  @@index([customerId, isActive])
+  @@index([projectId, isActive])
+  @@index([startDate, endDate])
+  @@map("customer_projects")
+}
+
+// =============================================================================
+// RAW COST DATA (Phase 2)
+// =============================================================================
+
+/// Ingestion batch status
+enum IngestionBatchStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+
+  @@map("ingestion_batch_status")
+}
+
+/// Raw cost ingestion batch - tracks each import operation
+model RawCostIngestionBatch {
+  id        String               @id @default(uuid()) @db.Uuid
+  source    String               @db.VarChar(50) // e.g., "manual_import", "billing_export"
+  month     String?              @db.VarChar(7) // YYYY-MM format, nullable
+  rowCount  Int                  @default(0) @map("row_count")
+  checksum  String?              @db.VarChar(64) // SHA256 hash for verification
+  status    IngestionBatchStatus @default(COMPLETED)
+  createdBy String               @map("created_by") @db.Uuid
+  createdAt DateTime             @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  creator        User            @relation("IngestionCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  rawCostEntries RawCostEntry[]
+
+  @@unique([checksum, month, source]) // Idempotency constraint (Phase 2.6)
+  @@index([month])
+  @@index([createdBy])
+  @@index([createdAt])
+  @@index([status])
+  @@map("raw_cost_ingestion_batches")
+}
+
+/// Raw cost entry - individual cost line items from GCP
+model RawCostEntry {
+  id                String   @id @default(uuid()) @db.Uuid
+  ingestionBatchId  String   @map("ingestion_batch_id") @db.Uuid
+  billingAccountId  String   @map("billing_account_id") @db.VarChar(100)
+  projectId         String   @map("project_id") @db.VarChar(100)
+  serviceId         String   @map("service_id") @db.VarChar(100)
+  skuId             String   @map("sku_id") @db.VarChar(100)
+  usageStartTime    DateTime @map("usage_start_time") @db.Timestamptz
+  usageEndTime      DateTime @map("usage_end_time") @db.Timestamptz
+  usageAmount       Decimal  @map("usage_amount") @db.Decimal(24, 10)
+  cost              Decimal  @db.Decimal(18, 10)
+  currency          String   @db.VarChar(3)
+  region            String?  @db.VarChar(50)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  ingestionBatch RawCostIngestionBatch @relation(fields: [ingestionBatchId], references: [id], onDelete: Cascade)
+
+  // Performance indexes (critical for billing queries)
+  @@index([projectId, usageStartTime])
+  @@index([ingestionBatchId])
+  @@index([billingAccountId, usageStartTime])
+  @@index([usageStartTime, usageEndTime])
+  @@map("raw_cost_entries")
+}
+
+// =============================================================================
+// PHASE 5: UNIFIED BILLING MODEL (MULTI-CLOUD)
+// =============================================================================
+
+/// Billing provider enumeration - supported cloud/service providers
+enum BillingProvider {
+  GCP       // Google Cloud Platform
+  AWS       // Amazon Web Services
+  AZURE     // Microsoft Azure
+  OPENAI    // OpenAI API usage
+  CUSTOM    // Custom/internal cost sources
+
+  @@map("billing_provider")
+}
+
+/// Billing source type - how data was ingested
+enum BillingSourceType {
+  BIGQUERY_EXPORT   // GCP BigQuery billing export
+  CUR_S3            // AWS Cost & Usage Report from S3
+  COST_EXPLORER     // AWS Cost Explorer API
+  USAGE_API         // OpenAI/Azure usage APIs
+  MANUAL_IMPORT     // Manual CSV/JSON import
+  WEBHOOK           // Real-time webhook ingestion
+
+  @@map("billing_source_type")
+}
+
+/// Unified billing line item - provider-agnostic cost data
+/// This is the ONLY input to pricing/credits/rules engines
+model BillingLineItem {
+  id               String            @id @default(uuid()) @db.Uuid
+  ingestionBatchId String            @map("ingestion_batch_id") @db.Uuid
+
+  // Provider identification
+  provider         BillingProvider
+  sourceType       BillingSourceType @map("source_type")
+
+  // Account hierarchy (provider-agnostic naming)
+  accountId        String            @map("account_id") @db.VarChar(100) // GCP billing account, AWS account ID, OpenAI org
+  subaccountId     String?           @map("subaccount_id") @db.VarChar(100) // GCP project, AWS linked account
+  resourceId       String?           @map("resource_id") @db.VarChar(255) // Resource ARN, instance ID, etc.
+
+  // Product/service identification
+  productId        String            @map("product_id") @db.VarChar(100) // GCP service, AWS service, OpenAI model
+  meterId          String            @map("meter_id") @db.VarChar(100) // GCP SKU, AWS usage type, OpenAI endpoint
+
+  // Usage metrics
+  usageAmount      Decimal           @map("usage_amount") @db.Decimal(24, 10)
+  usageUnit        String            @map("usage_unit") @db.VarChar(50) // hours, GB, tokens, requests
+
+  // Cost data
+  cost             Decimal           @db.Decimal(18, 10) // Actual cost after provider discounts
+  listCost         Decimal?          @map("list_cost") @db.Decimal(18, 10) // List/on-demand price
+  currency         String            @db.VarChar(3)
+
+  // Time range
+  usageStartTime   DateTime          @map("usage_start_time") @db.Timestamptz
+  usageEndTime     DateTime          @map("usage_end_time") @db.Timestamptz
+  invoiceMonth     String            @map("invoice_month") @db.VarChar(7) // YYYY-MM format
+
+  // Metadata
+  region           String?           @db.VarChar(50)
+  tags             Json?             @db.JsonB // Provider-specific tags/labels
+  rawPayload       Json?             @map("raw_payload") @db.JsonB // Original provider data for audit
+
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  ingestionBatch   BillingIngestionBatch @relation(fields: [ingestionBatchId], references: [id], onDelete: Cascade)
+
+  // Performance indexes
+  @@index([provider, invoiceMonth])
+  @@index([accountId, invoiceMonth])
+  @@index([subaccountId, usageStartTime])
+  @@index([ingestionBatchId])
+  @@index([usageStartTime, usageEndTime])
+  @@index([productId, meterId])
+  @@map("billing_line_items")
+}
+
+/// Billing ingestion batch - tracks each import operation (multi-provider)
+model BillingIngestionBatch {
+  id            String            @id @default(uuid()) @db.Uuid
+  provider      BillingProvider
+  sourceType    BillingSourceType @map("source_type")
+  invoiceMonth  String?           @map("invoice_month") @db.VarChar(7) // YYYY-MM format
+  rowCount      Int               @default(0) @map("row_count")
+  checksum      String?           @db.VarChar(64) // SHA256 hash for verification
+
+  // Source metadata for reproducibility
+  sourceMetadata Json?            @map("source_metadata") @db.JsonB // Dataset, bucket, query hash, API params
+
+  createdBy     String            @map("created_by") @db.Uuid
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  creator       User              @relation("BillingIngestionCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  lineItems     BillingLineItem[]
+
+  @@unique([provider, checksum, invoiceMonth, sourceType]) // Idempotency constraint
+  @@index([provider, invoiceMonth])
+  @@index([createdBy])
+  @@index([createdAt])
+  @@map("billing_ingestion_batches")
+}
+
+// =============================================================================
+// AUDIT SYSTEM
+// =============================================================================
+
+/// Audit log actions
+enum AuditAction {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  EXPORT
+  IMPORT
+  BIND
+  UNBIND
+  INVOICE_RUN_START
+  INVOICE_RUN_COMPLETE
+  INVOICE_LOCK
+  PERMISSION_CHANGE
+  // Phase 3.3: Credit actions
+  CREDIT_CREATE
+  CREDIT_UPDATE
+  CREDIT_APPLY
+  // Phase 3.5: Special rule actions
+  SPECIAL_RULE_CREATE
+  SPECIAL_RULE_UPDATE
+  SPECIAL_RULE_DELETE
+  SPECIAL_RULE_APPLY
+  // Phase 6: Invoice export actions
+  INVOICE_EXPORT
+
+  @@map("audit_action")
+}
+
+/// Comprehensive audit log for all system activities
+model AuditLog {
+  id          String      @id @default(uuid()) @db.Uuid
+  actorId     String?     @map("actor_id") @db.Uuid // Nullable for system actions
+  action      AuditAction
+  targetTable String      @map("target_table") @db.VarChar(100)
+  targetId    String?     @map("target_id") @db.Uuid
+
+  // Change tracking - JSONB for flexibility
+  beforeData  Json?       @map("before_data") @db.JsonB
+  afterData   Json?       @map("after_data") @db.JsonB
+
+  // Context
+  ipAddress   String?     @map("ip_address") @db.VarChar(45) // IPv6 compatible
+  userAgent   String?     @map("user_agent") @db.VarChar(500)
+
+  // Additional metadata
+  metadata    Json?       @db.JsonB // Request ID, session info, etc.
+
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  actor       User?       @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([action])
+  @@index([targetTable, targetId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// =============================================================================
+// INVOICE BATCH SYSTEM
+// =============================================================================
+
+/// Invoice run status enumeration
+enum InvoiceRunStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  LOCKED      // Finalized, cannot be modified
+
+  @@map("invoice_run_status")
+}
+
+/// Configuration snapshot for reproducible billing
+model ConfigSnapshot {
+  id          String   @id @default(uuid()) @db.Uuid
+  customerId  String   @map("customer_id") @db.Uuid
+
+  // Snapshot of billing configuration at time of invoice generation
+  config      Json     @db.JsonB // Pricing rules, discounts, credits, etc.
+
+  // Versioning
+  version     Int      @default(1)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  invoiceRuns InvoiceRun[]
+
+  @@index([customerId])
+  @@index([createdAt])
+  @@map("config_snapshots")
+}
+
+/// Invoice batch run - monthly billing execution
+model InvoiceRun {
+  id                      String           @id @default(uuid()) @db.Uuid
+  billingMonth            String           @map("billing_month") @db.VarChar(7) // YYYY-MM format
+  status                  InvoiceRunStatus @default(QUEUED)
+
+  // Phase 5: Provider tracking for multi-cloud support
+  provider                BillingProvider? // GCP, AWS, OPENAI, etc. (null = legacy/all)
+  sourceType              BillingSourceType? @map("source_type") // How data was fetched
+  sourceMetadata          Json?            @map("source_metadata") @db.JsonB // Dataset, bucket, query hash, API params
+
+  // Configuration used for this run
+  configSnapshotId        String?          @map("config_snapshot_id") @db.Uuid
+
+  // Source tracking for reproducibility (Phase 2)
+  sourceIngestionBatchIds String[]         @map("source_ingestion_batch_ids") @db.Uuid
+  sourceTimeRangeStart    DateTime?        @map("source_time_range_start") @db.Timestamptz
+  sourceTimeRangeEnd      DateTime?        @map("source_time_range_end") @db.Timestamptz
+  targetCustomerId        String?          @map("target_customer_id") @db.Uuid // If run for specific customer
+
+  // Execution tracking
+  createdBy               String           @map("created_by") @db.Uuid
+  startedAt               DateTime?        @map("started_at") @db.Timestamptz
+  finishedAt              DateTime?        @map("finished_at") @db.Timestamptz
+
+  // Error handling
+  errorMessage            String?          @map("error_message") @db.Text
+  errorDetails            Json?            @map("error_details") @db.JsonB
+
+  // Metadata - results
+  totalInvoices           Int?             @map("total_invoices")
+  totalAmount             Decimal?         @map("total_amount") @db.Decimal(18, 4)
+
+  // Metadata - run statistics (Phase 2.6)
+  customerCount           Int?             @map("customer_count")
+  projectCount            Int?             @map("project_count")
+  rowCount                Int?             @map("row_count") // Raw cost entries processed
+  currencyBreakdown       Json?            @map("currency_breakdown") @db.JsonB // {USD: "100.00", EUR: "50.00"}
+
+  // Idempotency key for preventing duplicate runs
+  sourceKey               String?          @map("source_key") @db.VarChar(255) // Computed from source params
+
+  createdAt               DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  creator             User             @relation("InvoiceRunCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  configSnapshot      ConfigSnapshot?  @relation(fields: [configSnapshotId], references: [id], onDelete: Restrict)
+  invoices            Invoice[]
+  creditLedgerEntries CreditLedger[] // Phase 3.3
+  specialRuleEffects  SpecialRuleEffectLedger[] // Phase 3.5
+  // Phase 7: Analytics
+  monthlySummaries    BillingMonthlySummary[]
+  customerSnapshots   BillingCustomerSnapshot[]
+  providerSnapshots   BillingProviderSnapshot[]
+
+  @@unique([billingMonth, targetCustomerId, sourceKey]) // Idempotency constraint
+  @@index([billingMonth])
+  @@index([status])
+  @@index([createdBy])
+  @@index([targetCustomerId])
+  @@map("invoice_runs")
+}
+
+/// Individual customer invoices
+/// Invoice status enumeration
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  CANCELLED
+  LOCKED
+
+  @@map("invoice_status")
+}
+
+model Invoice {
+  id              String    @id @default(uuid()) @db.Uuid
+  invoiceRunId    String    @map("invoice_run_id") @db.Uuid
+  customerId      String    @map("customer_id") @db.Uuid
+
+  // Invoice identification
+  invoiceNumber   String    @unique @map("invoice_number") @db.VarChar(50)
+  billingMonth    String    @map("billing_month") @db.VarChar(7) // YYYY-MM format
+  status          InvoiceStatus @default(DRAFT)
+
+  // Financial data (Phase 3.3 - subtotal/credits/tax/final)
+  subtotal        Decimal   @default(0) @db.Decimal(18, 4) // After pricing rules
+  creditAmount    Decimal   @default(0) @map("credit_amount") @db.Decimal(18, 4) // Phase 3.3: Credits applied
+  taxAmount       Decimal   @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  totalAmount     Decimal   @default(0) @map("total_amount") @db.Decimal(18, 4) // Final amount after credits
+  currency        String    @default("USD") @db.VarChar(10)
+
+  // Dates
+  issueDate       DateTime? @map("issue_date") @db.Date
+  dueDate         DateTime? @map("due_date") @db.Date
+  paidAt          DateTime? @map("paid_at") @db.Timestamptz
+
+  // Currency breakdown when mixed currencies exist
+  currencyBreakdown Json?   @map("currency_breakdown") @db.JsonB
+
+  // Locking for audit compliance
+  lockedAt        DateTime? @map("locked_at") @db.Timestamptz
+  lockedBy        String?   @map("locked_by") @db.Uuid
+
+  // Status and notes
+  notes           String?   @db.Text
+
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  invoiceRun      InvoiceRun @relation(fields: [invoiceRunId], references: [id], onDelete: Restrict)
+  customer        Customer   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  lineItems       InvoiceLineItem[]
+  creditLedgerEntries CreditLedger[] // Phase 3.3
+  exports         InvoiceExport[] // Phase 6: Export tracking
+  payments        Payment[] // Phase X: Payment tracking
+
+  @@index([invoiceRunId])
+  @@index([customerId])
+  @@index([invoiceNumber])
+  @@index([billingMonth])
+  @@index([status])
+  @@index([lockedAt])
+  @@map("invoices")
+}
+
+/// Invoice export record - tracks exports for audit and immutability (Phase 6)
+model InvoiceExport {
+  id           String   @id @default(uuid()) @db.Uuid
+  invoiceId    String   @map("invoice_id") @db.Uuid
+
+  // Export format
+  format       String   @db.VarChar(10) // csv, xlsx, pdf
+
+  // Content hash for integrity verification
+  contentHash  String   @map("content_hash") @db.VarChar(64) // SHA-256
+
+  // File metadata
+  filename     String   @db.VarChar(255)
+  fileSize     Int      @map("file_size") // bytes
+  mimeType     String   @map("mime_type") @db.VarChar(100)
+
+  // Export configuration used
+  exportConfig Json?    @map("export_config") @db.JsonB // aggregation level, options, etc.
+
+  // Audit trail
+  exportedBy   String   @map("exported_by") @db.Uuid
+  exportedAt   DateTime @default(now()) @map("exported_at") @db.Timestamptz
+
+  // Relations
+  invoice      Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@index([invoiceId])
+  @@index([exportedBy])
+  @@index([exportedAt])
+  @@map("invoice_exports")
+}
+
+/// Invoice line item - individual cost line items on an invoice
+model InvoiceLineItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  invoiceId   String   @map("invoice_id") @db.Uuid
+  lineNumber  Int      @map("line_number")
+  description String   @db.Text
+  quantity    Decimal  @db.Decimal(24, 10)
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(18, 10)
+  amount      Decimal  @db.Decimal(18, 4)
+  metadata    Json?    @db.JsonB // Additional data (projectId, serviceId, etc.)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([invoiceId, lineNumber])
+  @@map("invoice_line_items")
+}
+
+// =============================================================================
+// PHASE 3: SKU MANAGEMENT & PRICING ENGINE
+// =============================================================================
+
+/// SKU master - Google Cloud SKU definitions
+model Sku {
+  id                String   @id @default(uuid()) @db.Uuid
+  skuId             String   @unique @map("sku_id") @db.VarChar(100) // Google SKU ID
+  skuDescription    String   @map("sku_description") @db.VarChar(500)
+  serviceId         String   @map("service_id") @db.VarChar(100)
+  serviceDescription String  @map("service_description") @db.VarChar(255)
+  unit              String?  @db.VarChar(50) // Usage unit (e.g., "hour", "byte-seconds")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  skuGroupMappings  SkuGroupMapping[]
+
+  @@index([serviceId])
+  @@map("skus")
+}
+
+/// SKU Group - logical grouping of SKUs for pricing (e.g., "VM-OnDemand-N1")
+model SkuGroup {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique @db.VarChar(50) // e.g., "VM-OnDemand-N1"
+  name        String   @db.VarChar(255)
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  skuGroupMappings SkuGroupMapping[]
+  pricingRules     PricingRule[]
+  specialRules     SpecialRule[] // Phase 3.5
+
+  @@map("sku_groups")
+}
+
+/// SKU to Group mapping - many-to-many relationship
+model SkuGroupMapping {
+  id         String   @id @default(uuid()) @db.Uuid
+  skuId      String   @map("sku_id") @db.Uuid
+  skuGroupId String   @map("sku_group_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  sku      Sku      @relation(fields: [skuId], references: [id], onDelete: Cascade)
+  skuGroup SkuGroup @relation(fields: [skuGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([skuId, skuGroupId])
+  @@index([skuId])
+  @@index([skuGroupId])
+  @@map("sku_group_mappings")
+}
+
+// =============================================================================
+// PRICING ENGINE
+// =============================================================================
+
+/// Pricing list status
+enum PricingListStatus {
+  ACTIVE
+  INACTIVE
+
+  @@map("pricing_list_status")
+}
+
+/// Pricing list - customer-specific pricing configuration
+model PricingList {
+  id         String            @id @default(uuid()) @db.Uuid
+  customerId String            @map("customer_id") @db.Uuid
+  name       String            @db.VarChar(255)
+  status     PricingListStatus @default(ACTIVE)
+  createdAt  DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  pricingRules PricingRule[]
+
+  @@index([customerId, status])
+  @@map("pricing_lists")
+}
+
+/// Pricing rule type enumeration
+enum PricingRuleType {
+  LIST_DISCOUNT  // Apply discount rate to list price (e.g., 0.90 = 90% of list = 10% discount)
+
+  @@map("pricing_rule_type")
+}
+
+/// Pricing rule - defines how to price a SKU group
+model PricingRule {
+  id             String          @id @default(uuid()) @db.Uuid
+  pricingListId  String          @map("pricing_list_id") @db.Uuid
+  ruleType       PricingRuleType @default(LIST_DISCOUNT) @map("rule_type")
+  discountRate   Decimal         @map("discount_rate") @db.Decimal(5, 4) // e.g., 0.9000 = 90% of list
+  skuGroupId     String?         @map("sku_group_id") @db.Uuid // null = applies to all SKUs
+  effectiveStart DateTime?       @map("effective_start") @db.Date
+  effectiveEnd   DateTime?       @map("effective_end") @db.Date
+  priority       Int             @default(100) // Lower number = higher priority
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  pricingList PricingList @relation(fields: [pricingListId], references: [id], onDelete: Cascade)
+  skuGroup    SkuGroup?   @relation(fields: [skuGroupId], references: [id], onDelete: SetNull)
+
+  @@index([pricingListId, skuGroupId, priority])
+  @@map("pricing_rules")
+}
+
+// =============================================================================
+// PHASE 3.3: CREDITS ENGINE
+// =============================================================================
+
+/// Credit type enumeration
+enum CreditType {
+  PROMOTION   // Marketing/promotional credits
+  CONTRACT    // Contractual committed credits
+  FLEX        // Flexible/discretionary credits
+
+  @@map("credit_type")
+}
+
+/// Credit status enumeration
+enum CreditStatus {
+  ACTIVE      // Available for use
+  EXPIRED     // Past validity date
+  DEPLETED    // Fully consumed
+
+  @@map("credit_status")
+}
+
+/// Customer credits - promotional, contractual, or flexible credits
+model Credit {
+  id               String       @id @default(uuid()) @db.Uuid
+  customerId       String       @map("customer_id") @db.Uuid
+  billingAccountId String?      @map("billing_account_id") @db.VarChar(100) // Optional: scope to billing account
+  type             CreditType
+  totalAmount      Decimal      @map("total_amount") @db.Decimal(18, 4)
+  remainingAmount  Decimal      @map("remaining_amount") @db.Decimal(18, 4)
+  currency         String       @default("USD") @db.VarChar(3)
+  validFrom        DateTime     @map("valid_from") @db.Date
+  validTo          DateTime     @map("valid_to") @db.Date
+  allowCarryOver   Boolean      @default(false) @map("allow_carry_over") // If false, cannot be used outside month
+  status           CreditStatus @default(ACTIVE)
+  sourceReference  String?      @map("source_reference") @db.VarChar(255) // External reference (contract ID, promo code, etc.)
+  description      String?      @db.Text
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  customer         Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  ledgerEntries    CreditLedger[]
+
+  @@index([customerId, status])
+  @@index([validFrom, validTo])
+  @@index([status])
+  @@map("credits")
+}
+
+/// Credit ledger - tracks credit applications to invoices
+model CreditLedger {
+  id            String   @id @default(uuid()) @db.Uuid
+  creditId      String   @map("credit_id") @db.Uuid
+  invoiceRunId  String   @map("invoice_run_id") @db.Uuid
+  invoiceId     String   @map("invoice_id") @db.Uuid
+  appliedAmount Decimal  @map("applied_amount") @db.Decimal(18, 4)
+  appliedAt     DateTime @default(now()) @map("applied_at") @db.Timestamptz
+
+  // Snapshot of credit state at application time (for reproducibility)
+  creditRemainingBefore Decimal @map("credit_remaining_before") @db.Decimal(18, 4)
+
+  // Relations
+  credit     Credit     @relation(fields: [creditId], references: [id], onDelete: Restrict)
+  invoiceRun InvoiceRun @relation(fields: [invoiceRunId], references: [id], onDelete: Restrict)
+  invoice    Invoice    @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@index([creditId])
+  @@index([invoiceId])
+  @@index([invoiceRunId])
+  @@map("credit_ledger")
+}
+
+// =============================================================================
+// PHASE 3.5: SPECIAL RULES ENGINE
+// =============================================================================
+
+/// Special rule type enumeration
+enum SpecialRuleType {
+  EXCLUDE_SKU        // Exclude specific SKU from billing
+  EXCLUDE_SKU_GROUP  // Exclude entire SKU group from billing
+  OVERRIDE_COST      // Override cost with multiplier (0 = free)
+  MOVE_TO_CUSTOMER   // Re-assign cost to target customer
+
+  @@map("special_rule_type")
+}
+
+/// Special rules - configurable billing rules applied before pricing
+model SpecialRule {
+  id                  String          @id @default(uuid()) @db.Uuid
+  customerId          String?         @map("customer_id") @db.Uuid // null = global rule
+  name                String          @db.VarChar(255)
+  enabled             Boolean         @default(true)
+  priority            Int             @default(100) // Lower number = higher priority
+  ruleType            SpecialRuleType @map("rule_type")
+
+  // Match conditions (all nullable - combined with AND logic)
+  matchSkuId          String?         @map("match_sku_id") @db.VarChar(100)
+  matchSkuGroupId     String?         @map("match_sku_group_id") @db.Uuid
+  matchServiceId      String?         @map("match_service_id") @db.VarChar(100)
+  matchProjectId      String?         @map("match_project_id") @db.VarChar(100)
+  matchBillingAccountId String?       @map("match_billing_account_id") @db.VarChar(100)
+
+  // Rule-specific parameters
+  costMultiplier      Decimal?        @map("cost_multiplier") @db.Decimal(10, 6) // For OVERRIDE_COST (0 = free)
+  targetCustomerId    String?         @map("target_customer_id") @db.Uuid // For MOVE_TO_CUSTOMER
+
+  // Validity period
+  effectiveStart      DateTime?       @map("effective_start") @db.Date
+  effectiveEnd        DateTime?       @map("effective_end") @db.Date
+
+  // Soft delete support
+  deletedAt           DateTime?       @map("deleted_at") @db.Timestamptz
+
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  customer            Customer?       @relation("SpecialRuleCustomer", fields: [customerId], references: [id], onDelete: Restrict)
+  targetCustomer      Customer?       @relation("SpecialRuleTarget", fields: [targetCustomerId], references: [id], onDelete: Restrict)
+  matchSkuGroup       SkuGroup?       @relation(fields: [matchSkuGroupId], references: [id], onDelete: SetNull)
+  effectLedgerEntries SpecialRuleEffectLedger[]
+
+  @@index([customerId, enabled, priority])
+  @@index([matchSkuGroupId])
+  @@index([ruleType])
+  @@index([deletedAt])
+  @@map("special_rules")
+}
+
+/// Special rule effect ledger - tracks rule applications during invoice runs
+model SpecialRuleEffectLedger {
+  id              String   @id @default(uuid()) @db.Uuid
+  invoiceRunId    String   @map("invoice_run_id") @db.Uuid
+  ruleId          String   @map("rule_id") @db.Uuid
+  affectedRowCount Int     @map("affected_row_count")
+  costDelta       Decimal  @map("cost_delta") @db.Decimal(18, 4) // Negative = reduced
+  summary         Json     @db.JsonB // Grouped breakdown by project/sku/etc
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  invoiceRun      InvoiceRun  @relation(fields: [invoiceRunId], references: [id], onDelete: Restrict)
+  rule            SpecialRule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+
+  @@index([invoiceRunId])
+  @@index([ruleId])
+  @@map("special_rule_effect_ledger")
+}
+
+// =============================================================================
+// PHASE 7: BILLING ANALYTICS DASHBOARD
+// =============================================================================
+
+/// Monthly billing summary - aggregated fact table (append-only)
+model BillingMonthlySummary {
+  id                String           @id @default(uuid()) @db.Uuid
+  invoiceRunId      String           @map("invoice_run_id") @db.Uuid
+  month             String           @db.VarChar(7) // YYYY-MM
+  provider          BillingProvider?
+  customerId        String           @map("customer_id") @db.Uuid
+  productGroup      String           @map("product_group") @db.VarChar(100)
+
+  // Amounts breakdown
+  listAmount        Decimal          @map("list_amount") @db.Decimal(18, 4)
+  discountAmount    Decimal          @map("discount_amount") @db.Decimal(18, 4)
+  tierDiscountAmount Decimal         @map("tier_discount_amount") @db.Decimal(18, 4)
+  creditAmount      Decimal          @map("credit_amount") @db.Decimal(18, 4)
+  specialRulesAmount Decimal         @map("special_rules_amount") @db.Decimal(18, 4)
+  finalAmount       Decimal          @map("final_amount") @db.Decimal(18, 4)
+
+  // Metrics
+  usageQuantity     Decimal          @map("usage_quantity") @db.Decimal(24, 10)
+  lineItemCount     Int              @map("line_item_count")
+
+  currency          String           @default("USD") @db.VarChar(3)
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  invoiceRun        InvoiceRun       @relation(fields: [invoiceRunId], references: [id], onDelete: Restrict)
+  customer          Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@unique([invoiceRunId, customerId, productGroup, provider])
+  @@index([month])
+  @@index([customerId, month])
+  @@index([provider, month])
+  @@index([productGroup, month])
+  @@map("billing_monthly_summary")
+}
+
+/// Customer billing snapshot - monthly customer-level aggregates
+model BillingCustomerSnapshot {
+  id                String   @id @default(uuid()) @db.Uuid
+  invoiceRunId      String   @map("invoice_run_id") @db.Uuid
+  month             String   @db.VarChar(7) // YYYY-MM
+  customerId        String   @map("customer_id") @db.Uuid
+
+  // Totals
+  totalListAmount   Decimal  @map("total_list_amount") @db.Decimal(18, 4)
+  totalFinalAmount  Decimal  @map("total_final_amount") @db.Decimal(18, 4)
+  totalDiscount     Decimal  @map("total_discount") @db.Decimal(18, 4)
+  totalCredits      Decimal  @map("total_credits") @db.Decimal(18, 4)
+
+  // Computed metrics
+  grossMarginPct    Decimal? @map("gross_margin_pct") @db.Decimal(8, 4) // (final - cost) / final * 100
+  momGrowthPct      Decimal? @map("mom_growth_pct") @db.Decimal(8, 4) // Month-over-month growth %
+
+  // Previous month reference for MoM calculation
+  prevMonthAmount   Decimal? @map("prev_month_amount") @db.Decimal(18, 4)
+
+  // Invoice counts
+  invoiceCount      Int      @map("invoice_count")
+  lineItemCount     Int      @map("line_item_count")
+
+  currency          String   @default("USD") @db.VarChar(3)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  invoiceRun        InvoiceRun @relation(fields: [invoiceRunId], references: [id], onDelete: Restrict)
+  customer          Customer   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@unique([invoiceRunId, customerId])
+  @@index([month])
+  @@index([customerId, month])
+  @@index([totalFinalAmount])
+  @@map("billing_customer_snapshots")
+}
+
+/// Provider billing snapshot - monthly provider-level aggregates
+model BillingProviderSnapshot {
+  id                String           @id @default(uuid()) @db.Uuid
+  invoiceRunId      String           @map("invoice_run_id") @db.Uuid
+  month             String           @db.VarChar(7) // YYYY-MM
+  provider          BillingProvider?
+
+  // Cost and revenue
+  totalCost         Decimal          @map("total_cost") @db.Decimal(18, 4) // Raw cost from provider
+  totalRevenue      Decimal          @map("total_revenue") @db.Decimal(18, 4) // Billed to customers
+  totalDiscount     Decimal          @map("total_discount") @db.Decimal(18, 4)
+
+  // Metrics
+  marginAmount      Decimal          @map("margin_amount") @db.Decimal(18, 4) // Revenue - Cost
+  marginPct         Decimal?         @map("margin_pct") @db.Decimal(8, 4)
+  momGrowthPct      Decimal?         @map("mom_growth_pct") @db.Decimal(8, 4)
+
+  // Counts
+  customerCount     Int              @map("customer_count")
+  invoiceCount      Int              @map("invoice_count")
+  lineItemCount     Int              @map("line_item_count")
+
+  currency          String           @default("USD") @db.VarChar(3)
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  invoiceRun        InvoiceRun       @relation(fields: [invoiceRunId], references: [id], onDelete: Restrict)
+
+  @@unique([invoiceRunId, provider])
+  @@index([month])
+  @@index([provider, month])
+  @@map("billing_provider_snapshots")
+}
+
+// =============================================================================
+// PHASE X: PAYMENT TRACKING
+// =============================================================================
+
+/// Payment record - tracks payments against invoices
+model Payment {
+  id            String   @id @default(uuid()) @db.Uuid
+  invoiceId     String   @map("invoice_id") @db.Uuid
+  
+  // Payment details
+  amount        Decimal  @db.Decimal(18, 4)
+  currency      String   @default("USD") @db.VarChar(3)
+  paymentDate   DateTime @map("payment_date") @db.Date
+  
+  // Reference information
+  reference     String?  @db.VarChar(255) // External payment reference
+  method        String?  @db.VarChar(50) // wire, check, credit_card, etc.
+  notes         String?  @db.Text
+  
+  // Audit
+  recordedBy    String   @map("recorded_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  
+  // Relations
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  recorder      User     @relation("PaymentRecorder", fields: [recordedBy], references: [id], onDelete: Restrict)
+  
+  @@index([invoiceId])
+  @@index([paymentDate])
+  @@index([recordedBy])
+  @@map("payments")
+}
+

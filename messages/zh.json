@@ -1,0 +1,815 @@
+{
+  "common": {
+    "appName": "Sieger",
+    "appSubtitle": "账单控制台",
+    "loading": "加载中...",
+    "save": "保存",
+    "saving": "保存中...",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "create": "创建",
+    "search": "搜索",
+    "actions": "操作",
+    "status": "状态",
+    "noData": "暂无数据",
+    "confirm": "确认",
+    "back": "返回",
+    "next": "下一步",
+    "previous": "上一步",
+    "submit": "提交",
+    "reset": "重置",
+    "clear": "清除",
+    "close": "关闭",
+    "yes": "是",
+    "no": "否",
+    "all": "全部",
+    "none": "无",
+    "active": "活跃",
+    "inactive": "停用",
+    "suspended": "已暂停",
+    "enabled": "已启用",
+    "disabled": "已禁用",
+    "view": "查看",
+    "download": "下载",
+    "export": "导出",
+    "import": "导入",
+    "refresh": "刷新",
+    "retry": "重试",
+    "add": "添加",
+    "remove": "移除",
+    "update": "更新",
+    "manage": "管理",
+    "select": "选择",
+    "apply": "应用",
+    "applyFilters": "应用筛选",
+    "name": "名称",
+    "description": "描述",
+    "type": "类型",
+    "amount": "金额",
+    "total": "合计",
+    "date": "日期",
+    "from": "从",
+    "to": "至",
+    "createdAt": "创建时间",
+    "updatedAt": "更新时间",
+    "never": "从未",
+    "optional": "可选",
+    "required": "必填",
+    "page": "页",
+    "of": "/",
+    "showing": "显示",
+    "items": "条",
+    "noResults": "未找到结果",
+    "searchPlaceholder": "搜索...",
+    "selectOption": "请选择",
+    "allItems": "全部",
+    "email": "邮箱",
+    "roles": "角色",
+    "currency": "币种",
+    "provider": "服务商",
+    "allProviders": "所有服务商",
+    "month": "月份",
+    "selectMonth": "选择月份",
+    "customer": "客户",
+    "allCustomers": "所有客户",
+    "selectCustomer": "选择客户"
+  },
+  "auth": {
+    "signIn": "登录",
+    "signOut": "退出登录",
+    "email": "邮箱",
+    "password": "密码",
+    "continue": "继续",
+    "enterCredentials": "请输入您的凭证以访问账户",
+    "demoCredentials": "演示凭证",
+    "loginFailed": "登录失败",
+    "invalidCredentials": "邮箱或密码错误",
+    "profile": "个人资料",
+    "copyright": "Sieger GCP 分销商控制台"
+  },
+  "login": {
+    "hero": {
+      "title1": "企业级",
+      "title2": "云计费",
+      "title3": "平台",
+      "description": "面向 GCP、AWS 和 Azure 分销商的多云成本管理和账单自动化解决方案。"
+    }
+  },
+  "nav": {
+    "main": {
+      "dashboard": "仪表盘",
+      "invoices": "发票",
+      "settings": "设置"
+    },
+    "admin": {
+      "title": "管理中心",
+      "customers": "客户管理",
+      "billingAccounts": "账单账户",
+      "projects": "项目",
+      "productGroups": "产品组",
+      "pricingLists": "定价列表",
+      "credits": "信用额度",
+      "specialRules": "特殊规则",
+      "invoiceRuns": "发票批次",
+      "payments": "付款记录",
+      "rawCostImports": "成本导入",
+      "reconciliation": "对账",
+      "users": "用户管理",
+      "auditLogs": "审计日志"
+    }
+  },
+  "header": {
+    "notifications": "通知",
+    "help": "帮助",
+    "theme": {
+      "toggle": "切换主题",
+      "light": "浅色",
+      "dark": "深色",
+      "system": "跟随系统"
+    },
+    "language": {
+      "toggle": "切换语言",
+      "en": "英文",
+      "zh": "中文"
+    }
+  },
+  "dashboard": {
+    "title": "仪表盘",
+    "subtitle": "账单分析与收入概览",
+    "welcome": "欢迎回来",
+    "overview": "概览",
+    "recentActivity": "最近活动",
+    "quickActions": "快捷操作",
+    "revenueTrends": "收入趋势",
+    "revenueByProvider": "按服务商收入",
+    "topProductGroups": "热门产品组",
+    "topCustomers": "重要客户",
+    "noDataTitle": "暂无数据",
+    "noDataDescription": "所选时间段内没有可用的账单数据。请运行发票批次以生成分析数据。",
+    "kpi": {
+      "netRevenue": "净收入",
+      "netRevenueDesc": "最终账单金额",
+      "listAmount": "列表价",
+      "listAmountDesc": "折扣前金额",
+      "discounts": "折扣",
+      "discountsDesc": "直接折扣 + 阶梯折扣",
+      "creditsApplied": "已用额度",
+      "creditsAppliedDesc": "消耗的信用额度",
+      "grossMargin": "毛利率",
+      "grossMarginDesc": "利润率"
+    },
+    "table": {
+      "rank": "排名",
+      "customer": "客户",
+      "revenue": "收入",
+      "growth": "增长",
+      "invoices": "发票数",
+      "noCustomerData": "暂无客户数据"
+    }
+  },
+  "invoices": {
+    "title": "发票",
+    "subtitle": "管理和导出客户发票",
+    "invoiceNumber": "发票号",
+    "customer": "客户",
+    "billingMonth": "账单月份",
+    "amount": "金额",
+    "total": "合计",
+    "status": "状态",
+    "issueDate": "开票日期",
+    "dueDate": "到期日期",
+    "locked": "锁定",
+    "lockedOnly": "仅已锁定",
+    "unlockedOnly": "仅未锁定",
+    "statuses": {
+      "all": "所有状态",
+      "draft": "草稿",
+      "issued": "已开票",
+      "paid": "已付款",
+      "cancelled": "已取消",
+      "locked": "已锁定"
+    },
+    "actions": {
+      "view": "查看发票",
+      "export": "导出",
+      "lock": "锁定发票"
+    },
+    "summary": {
+      "totalInvoices": "发票总数",
+      "draft": "草稿",
+      "issued": "已开票",
+      "paid": "已付款"
+    },
+    "noInvoices": "未找到发票",
+    "notFound": "发票不存在",
+    "noPermission": "您没有权限查看此发票",
+    "loadFailed": "加载发票失败",
+    "alreadyLocked": "发票已锁定",
+    "lockFailed": "锁定发票失败",
+    "showing": "显示第 {from} 至 {to} 条，共 {total} 条发票"
+  },
+  "customers": {
+    "title": "客户",
+    "subtitle": "管理客户账户和设置",
+    "name": "名称",
+    "externalId": "外部ID",
+    "domain": "域名",
+    "status": "状态",
+    "currency": "币种",
+    "paymentTerms": "付款条款",
+    "paymentTermsDays": "付款期限（天）",
+    "contact": "联系人",
+    "contactEmail": "联系邮箱",
+    "primaryContactEmail": "主要联系邮箱",
+    "statuses": {
+      "active": "活跃",
+      "suspended": "已暂停",
+      "terminated": "已终止"
+    },
+    "actions": {
+      "create": "添加客户",
+      "edit": "编辑客户",
+      "view": "查看",
+      "viewDetails": "查看详情"
+    },
+    "modal": {
+      "createTitle": "新建客户",
+      "editTitle": "编辑客户"
+    },
+    "searchPlaceholder": "搜索客户...",
+    "noCustomers": "未找到客户",
+    "notFound": "客户不存在",
+    "loadFailed": "加载客户失败",
+    "saveFailed": "保存客户失败",
+    "tabs": {
+      "projects": "项目",
+      "pricing": "定价",
+      "credits": "额度",
+      "invoices": "发票"
+    }
+  },
+  "users": {
+    "title": "用户",
+    "subtitle": "管理系统用户和权限",
+    "name": "姓名",
+    "firstName": "名",
+    "lastName": "姓",
+    "email": "邮箱",
+    "roles": "角色",
+    "role": "角色",
+    "status": "状态",
+    "lastLogin": "最后登录",
+    "password": "密码",
+    "customerAccess": "客户访问权限",
+    "customerAccessNote": "为用户分配客户以限制其数据访问权限。未分配客户的用户无法查看任何客户数据。",
+    "noCustomerAssigned": "-- 未分配客户 --",
+    "restrictedNote": "此用户只能查看所选客户的数据。",
+    "actions": {
+      "create": "添加用户",
+      "edit": "编辑用户",
+      "manage": "管理",
+      "deactivate": "停用",
+      "activate": "启用"
+    },
+    "modal": {
+      "createTitle": "新建用户",
+      "editTitle": "编辑用户",
+      "basicInfo": "基本信息",
+      "rolePermissions": "角色与权限"
+    },
+    "roles": {
+      "super_admin": "超级管理员",
+      "super_admin_desc": "拥有所有权限的完整系统控制",
+      "admin": "管理员",
+      "admin_desc": "拥有大部分权限的管理访问",
+      "finance": "财务",
+      "finance_desc": "拥有账单访问权限的财务人员",
+      "viewer": "查看者",
+      "viewer_desc": "只读访问权限"
+    },
+    "placeholders": {
+      "firstName": "张",
+      "lastName": "三",
+      "email": "zhangsan@example.com",
+      "chooseRole": "选择角色..."
+    },
+    "passwordHint": "至少8个字符，包含大小写字母和数字",
+    "searchPlaceholder": "搜索用户...",
+    "noUsers": "未找到用户",
+    "loadFailed": "加载用户失败"
+  },
+  "settings": {
+    "title": "设置",
+    "subtitle": "管理您的账户设置",
+    "appearance": "外观",
+    "language": "语言",
+    "notifications": "通知",
+    "security": "安全",
+    "profile": "个人资料",
+    "changePassword": "修改密码",
+    "currentPassword": "当前密码",
+    "newPassword": "新密码",
+    "confirmPassword": "确认新密码",
+    "placeholders": {
+      "currentPassword": "请输入当前密码",
+      "newPassword": "至少8个字符，包含大小写字母和数字",
+      "confirmPassword": "请再次输入新密码"
+    },
+    "noRoles": "未分配角色",
+    "passwordRequirements": "密码要求：至少8个字符，包含一个大写字母、一个小写字母和一个数字。"
+  },
+  "projects": {
+    "title": "项目",
+    "subtitle": "管理云服务商项目和客户绑定",
+    "projectId": "项目ID",
+    "projectName": "项目名称",
+    "billingAccount": "账单账户",
+    "status": "状态",
+    "statuses": {
+      "active": "活跃",
+      "suspended": "已暂停",
+      "notFound": "未找到",
+      "noBilling": "无账单"
+    },
+    "actions": {
+      "create": "创建",
+      "edit": "编辑"
+    },
+    "modal": {
+      "createTitle": "创建项目",
+      "editTitle": "编辑项目"
+    },
+    "searchPlaceholder": "搜索项目...",
+    "noProjects": "未找到项目",
+    "loadFailed": "加载项目失败",
+    "saveFailed": "保存项目失败",
+    "placeholders": {
+      "projectId": "my-gcp-project-id",
+      "projectName": "我的项目"
+    },
+    "hints": {
+      "projectId": "云服务商的唯一项目标识符",
+      "emptyName": "留空则使用项目ID作为显示名称"
+    }
+  },
+  "billingAccounts": {
+    "title": "账单账户",
+    "subtitle": "管理云服务商账单账户",
+    "name": "名称",
+    "billingAccountId": "账单账户 ID",
+    "projectCount": "项目数",
+    "searchPlaceholder": "搜索账单账户...",
+    "noAccounts": "未找到账单账户",
+    "notFound": "账单账户不存在",
+    "loadFailed": "加载账单账户失败",
+    "createFailed": "创建账单账户失败",
+    "updateFailed": "更新账单账户失败",
+    "deleteFailed": "删除账单账户失败",
+    "actions": {
+      "create": "添加账户"
+    },
+    "modal": {
+      "createTitle": "添加账单账户",
+      "editTitle": "编辑账单账户",
+      "deleteTitle": "删除账单账户",
+      "deleteConfirm": "确定要删除「{name}」吗？此操作无法撤销。"
+    },
+    "detail": {
+      "info": "账户信息",
+      "projects": "关联项目",
+      "noProjects": "暂无关联项目",
+      "noProjectsHint": "可以在项目页面添加项目"
+    },
+    "placeholders": {
+      "billingAccountId": "例如：01A2B3-C4D5E6-F78901",
+      "name": "例如：生产环境账单"
+    },
+    "hints": {
+      "billingAccountId": "GCP 账单账户 ID（格式：XXXXXX-XXXXXX-XXXXXX）",
+      "name": "可选的显示名称"
+    }
+  },
+  "productGroups": {
+    "title": "产品组",
+    "subtitle": "将计费项目分组（如计算、存储、网络），使发票更清晰",
+    "code": "代码",
+    "groupCode": "组代码",
+    "name": "名称",
+    "displayName": "显示名称",
+    "description": "描述",
+    "billingItems": "计费项目",
+    "pricingRules": "定价规则",
+    "actions": {
+      "create": "创建分组",
+      "manageItems": "管理项目",
+      "addItems": "添加项目"
+    },
+    "modal": {
+      "createTitle": "创建产品组",
+      "createDescription": "创建一个分组来归类计费项目。创建后，您可以从「成本导入」中添加计费项目到此分组。",
+      "addItemsTitle": "添加计费项目到分组",
+      "addItemsDescription": "从成本导入中搜索计费项目。项目必须先通过「成本导入」导入后才能在此显示。",
+      "removeItemTitle": "从分组移除项目",
+      "removeItemConfirm": "确定要从分组中移除此计费项目吗？"
+    },
+    "detail": {
+      "billingItemsTitle": "此分组中的计费项目",
+      "noItemsYet": "暂无计费项目。点击「添加项目」从成本导入中添加项目。",
+      "itemCount": "此分组中有 {count} 个计费项目"
+    },
+    "table": {
+      "itemId": "项目ID",
+      "itemName": "项目名称",
+      "cloudService": "云服务",
+      "unit": "单位"
+    },
+    "search": {
+      "placeholder": "搜索计费项目...",
+      "noResults": "未找到计费项目。",
+      "noResultsHint": "请确保您已通过「成本导入」导入了成本数据。",
+      "enterTerm": "输入搜索词以查找计费项目",
+      "searchHint": "按项目名称、ID或云服务名称搜索"
+    },
+    "placeholders": {
+      "code": "例如 COMPUTE, STORAGE, NETWORK",
+      "name": "例如 计算服务, 云存储",
+      "description": "此分组包含哪些类型的计费项目？"
+    },
+    "hints": {
+      "code": "用于报表的简短代码",
+      "name": "显示在发票上的名称"
+    },
+    "searchPlaceholder": "搜索分组...",
+    "noGroups": "暂无产品组。点击「创建分组」添加您的第一个分组。",
+    "loadFailed": "加载产品组失败",
+    "itemsUnit": "项",
+    "rulesUnit": "条规则",
+    "selected": "已选择 {count} 项",
+    "adding": "添加中...",
+    "addCount": "添加 {count} 项"
+  },
+  "pricingLists": {
+    "title": "定价列表",
+    "subtitle": "管理客户定价规则",
+    "name": "名称",
+    "rules": "规则",
+    "rulesCount": "条规则",
+    "searchPlaceholder": "搜索定价列表...",
+    "noLists": "未找到定价列表",
+    "notFound": "定价列表不存在",
+    "loadFailed": "加载定价列表失败",
+    "createFailed": "创建定价列表失败",
+    "updateFailed": "更新定价列表失败",
+    "deleteFailed": "删除定价列表失败",
+    "actions": {
+      "create": "添加定价列表",
+      "manageRules": "规则"
+    },
+    "modal": {
+      "createTitle": "创建定价列表",
+      "editTitle": "编辑定价列表",
+      "deleteTitle": "删除定价列表",
+      "deleteConfirm": "确定要删除「{name}」吗？所有定价规则也将被删除。"
+    },
+    "placeholders": {
+      "name": "例如：标准定价 2025"
+    },
+    "detail": {
+      "rules": "定价规则",
+      "addRule": "添加规则",
+      "noRules": "暂无定价规则",
+      "skuGroup": "SKU 分组",
+      "allSkus": "所有 SKU（默认）",
+      "discount": "折扣",
+      "priority": "优先级",
+      "effectivePeriod": "有效期",
+      "always": "始终有效",
+      "addRuleTitle": "添加定价规则",
+      "selectSkuGroup": "选择 SKU 分组...",
+      "skuGroupHint": "留空则应用于其他规则未覆盖的所有 SKU",
+      "discountPercent": "折扣百分比",
+      "discountHint": "例如：10 表示列表价的 10% 折扣",
+      "effectiveStart": "开始日期",
+      "effectiveEnd": "结束日期",
+      "priorityHint": "数字越小，优先级越高",
+      "addRuleFailed": "添加定价规则失败",
+      "deleteRuleTitle": "删除定价规则",
+      "deleteRuleConfirm": "确定要删除此定价规则吗？",
+      "deleteRuleFailed": "删除定价规则失败"
+    }
+  },
+  "credits": {
+    "title": "信用额度",
+    "subtitle": "管理客户信用额度和折扣",
+    "customer": "客户",
+    "type": "类型",
+    "total": "总额",
+    "remaining": "剩余",
+    "validFrom": "生效日期",
+    "validTo": "失效日期",
+    "status": "状态",
+    "types": {
+      "promotional": "促销",
+      "commitment": "承诺",
+      "goodwill": "善意",
+      "refund": "退款"
+    },
+    "actions": {
+      "create": "添加额度"
+    },
+    "modal": {
+      "createTitle": "新建信用额度"
+    },
+    "placeholders": {
+      "selectCustomer": "选择客户",
+      "amount": "1000.00",
+      "description": "促销活动信用额度..."
+    },
+    "searchPlaceholder": "搜索信用额度...",
+    "noCredits": "未找到信用额度",
+    "loadFailed": "加载信用额度失败"
+  },
+  "specialRules": {
+    "title": "特殊规则",
+    "subtitle": "配置自定义计费规则"
+  },
+  "invoiceRuns": {
+    "title": "发票批次",
+    "subtitle": "生成和管理计费周期",
+    "billingMonth": "账单月份",
+    "provider": "服务商",
+    "status": "状态",
+    "invoices": "发票数",
+    "totalAmount": "总金额",
+    "created": "创建时间",
+    "actions": {
+      "create": "新建批次",
+      "execute": "执行"
+    },
+    "modal": {
+      "createTitle": "新建发票批次",
+      "executeTitle": "执行发票批次",
+      "executeConfirm": "这将根据成本数据为所有客户生成发票。此操作可能需要几分钟。是否继续？"
+    },
+    "providerOptions": {
+      "all": "所有服务商",
+      "gcp": "GCP",
+      "aws": "AWS",
+      "azure": "Azure",
+      "openai": "OpenAI",
+      "custom": "自定义"
+    },
+    "searchPlaceholder": "搜索发票批次...",
+    "noInvoiceRuns": "未找到发票批次",
+    "loadFailed": "加载发票批次失败"
+  },
+  "payments": {
+    "title": "付款记录",
+    "subtitle": "跟踪和记录发票付款",
+    "paymentDate": "付款日期",
+    "invoice": "发票",
+    "customer": "客户",
+    "amount": "金额",
+    "method": "方式",
+    "reference": "参考号",
+    "recordedBy": "记录人",
+    "balance": "余额",
+    "paid": "已付",
+    "notes": "备注",
+    "methods": {
+      "select": "选择方式",
+      "bankTransfer": "银行转账",
+      "creditCard": "信用卡",
+      "check": "支票",
+      "wireTransfer": "电汇",
+      "ach": "ACH",
+      "other": "其他"
+    },
+    "actions": {
+      "record": "记录付款"
+    },
+    "modal": {
+      "title": "记录付款"
+    },
+    "summary": {
+      "totalPayments": "付款总数",
+      "totalAmount": "总金额"
+    },
+    "filters": {
+      "startDate": "开始日期",
+      "endDate": "结束日期"
+    },
+    "placeholders": {
+      "selectInvoice": "选择未付款发票",
+      "reference": "例如 TXN-123456",
+      "notes": "关于此付款的可选备注"
+    },
+    "noPayments": "暂无付款记录",
+    "loadFailed": "加载付款记录失败",
+    "recording": "记录中..."
+  },
+  "costImports": {
+    "title": "成本导入",
+    "subtitle": "从云服务商导入账单数据。导入的数据用于生成发票，可在「产品组」中分类。",
+    "importTime": "导入时间",
+    "month": "月份",
+    "source": "来源",
+    "rows": "行数",
+    "totalCost": "总成本",
+    "status": "状态",
+    "importedBy": "导入人",
+    "checksum": "校验和",
+    "summary": {
+      "totalBatches": "批次总数",
+      "totalRows": "总行数",
+      "totalCost": "总成本"
+    },
+    "filters": {
+      "month": "月份",
+      "source": "来源",
+      "allMonths": "所有月份",
+      "allSources": "所有来源"
+    },
+    "noImports": "暂无成本数据导入。请使用API或BigQuery集成导入账单数据。",
+    "loadFailed": "加载导入批次失败"
+  },
+  "reconciliation": {
+    "title": "对账",
+    "subtitle": "比对账单数据与服务商报告"
+  },
+  "auditLogs": {
+    "title": "审计日志",
+    "subtitle": "查看系统活动和变更记录"
+  },
+  "errors": {
+    "generic": "发生错误",
+    "notFound": "未找到",
+    "unauthorized": "未授权",
+    "forbidden": "禁止访问",
+    "serverError": "服务器错误",
+    "loadFailed": "加载数据失败",
+    "saveFailed": "保存数据失败"
+  },
+  "validation": {
+    "required": "此字段为必填项",
+    "invalidEmail": "请输入有效的邮箱地址",
+    "minLength": "至少需要 {min} 个字符",
+    "maxLength": "不能超过 {max} 个字符"
+  },
+  "help": {
+    "title": "管理员帮助指南",
+    "subtitle": "了解如何有效使用 Sieger 账单控制台",
+    "goTo": "前往",
+    "flowDiagram": {
+      "title": "系统配置流程",
+      "subtitle": "此图展示了各模块之间的关联以及推荐的配置顺序。点击任意节点可跳转到对应模块。",
+      "nodes": {
+        "customers": "客户",
+        "billingAccounts": "账单账户",
+        "projects": "项目",
+        "productGroups": "产品组",
+        "pricingLists": "定价列表",
+        "credits": "信用额度",
+        "costImports": "成本导入",
+        "invoiceRuns": "发票批次",
+        "invoices": "发票",
+        "reconciliation": "对账",
+        "payments": "付款"
+      },
+      "phases": {
+        "foundation": "1. 基础设置",
+        "setup": "2. 账户设置",
+        "config": "3. 配置",
+        "import": "4. 数据导入",
+        "generate": "5. 生成",
+        "review": "6. 审核",
+        "collect": "7. 收款"
+      },
+      "legend": {
+        "customer": "客户数据",
+        "infrastructure": "基础设施",
+        "pricing": "定价与额度",
+        "catalog": "产品目录",
+        "data": "数据导入",
+        "processing": "处理",
+        "output": "输出与审核"
+      },
+      "description": {
+        "title": "配置流程说明：",
+        "step1": "首先创建客户 - 客户是账单系统的基础",
+        "step2": "设置云服务商的账单账户并关联到客户",
+        "step3": "在账单账户下创建项目，然后分配给客户",
+        "step4": "配置产品组以分类 SKU，以及包含折扣规则的定价列表",
+        "step5": "通过成本导入导入成本数据 - 这需要先配置项目和产品组",
+        "step6": "运行发票批次，使用成本、定价和信用额度生成发票",
+        "step7": "审核生成的发票，与服务商数据对账，并记录付款"
+      }
+    },
+    "quickStart": {
+      "title": "快速入门",
+      "description": "按照以下步骤设置您的账单系统：",
+      "step1": "在客户管理模块创建客户",
+      "step2": "设置账单账户并关联云服务商",
+      "step3": "创建项目并分配给客户",
+      "step4": "配置产品组以分类计费项目",
+      "step5": "为客户设置带有折扣规则的定价列表",
+      "step6": "导入成本数据并运行发票批次"
+    },
+    "modulesTitle": "模块指南",
+    "modules": {
+      "customers": {
+        "title": "客户管理",
+        "description": "管理客户账户、联系人和账单设置",
+        "step1": "点击「添加客户」创建新客户",
+        "step2": "配置付款条款和币种",
+        "step3": "为客户分配定价列表和信用额度"
+      },
+      "billingAccounts": {
+        "title": "账单账户",
+        "description": "管理云服务商账单账户（GCP、AWS、Azure）",
+        "step1": "添加云服务商的账单账户 ID",
+        "step2": "将账单账户关联到客户"
+      },
+      "projects": {
+        "title": "项目管理",
+        "description": "管理云项目并将其关联到客户",
+        "step1": "使用云服务商项目 ID 创建项目",
+        "step2": "将项目分配给账单账户",
+        "step3": "将项目关联到客户以进行计费"
+      },
+      "productGroups": {
+        "title": "产品组",
+        "description": "分类计费项目以使发票更清晰",
+        "step1": "创建分组如计算、存储、网络",
+        "step2": "首先通过成本导入导入成本数据",
+        "step3": "将计费项目添加到相应分组"
+      },
+      "pricingLists": {
+        "title": "定价列表",
+        "description": "配置客户专属定价和折扣",
+        "step1": "创建定价列表（如「标准定价 2025」）",
+        "step2": "按产品组添加折扣规则",
+        "step3": "将定价列表分配给客户"
+      },
+      "credits": {
+        "title": "信用额度",
+        "description": "管理客户信用额度和促销余额",
+        "step1": "添加信用额度并指定类型（促销、承诺等）",
+        "step2": "信用额度在发票批次运行时自动应用"
+      },
+      "costImports": {
+        "title": "成本导入",
+        "description": "从云服务商导入原始账单数据",
+        "step1": "使用 API 或 BigQuery 集成导入成本",
+        "step2": "导入的数据用于生成发票"
+      },
+      "invoiceRuns": {
+        "title": "发票批次",
+        "description": "从成本数据生成客户发票",
+        "step1": "选择账单月份和云服务商",
+        "step2": "执行批次以生成草稿发票",
+        "step3": "审核并锁定发票"
+      },
+      "payments": {
+        "title": "付款记录",
+        "description": "记录和跟踪发票付款",
+        "step1": "选择未付款发票",
+        "step2": "记录付款方式和参考号"
+      },
+      "reconciliation": {
+        "title": "对账",
+        "description": "比对账单数据与服务商报告",
+        "step1": "上传服务商账单报告",
+        "step2": "审核差异并解决问题"
+      },
+      "users": {
+        "title": "用户管理",
+        "description": "管理系统用户和访问权限",
+        "step1": "创建具有适当角色的用户",
+        "step2": "分配客户范围以限制数据访问",
+        "step3": "不再需要访问时停用用户"
+      },
+      "auditLogs": {
+        "title": "审计日志",
+        "description": "查看所有系统活动和变更",
+        "step1": "按日期、用户或操作类型筛选",
+        "step2": "审核变更以满足合规要求"
+      }
+    },
+    "roles": {
+      "title": "用户角色说明",
+      "superAdmin": "拥有所有权限的完整系统访问权限。可以管理所有客户和系统设置。",
+      "admin": "在分配的客户范围内拥有管理访问权限。可以管理客户、发票和配置。",
+      "finance": "财务团队的账单操作访问权限。可以查看发票、记录付款和管理信用额度。",
+      "viewer": "在分配范围内的只读访问权限。无法进行任何更改。"
+    },
+    "tips": {
+      "title": "提示与最佳实践",
+      "tip1": "审核后务必锁定发票以防止意外更改",
+      "tip2": "使用产品组整理计费项目，使客户发票更清晰",
+      "tip3": "为非管理员用户分配客户范围以限制其数据访问",
+      "tip4": "定期检查审计日志以监控系统变更"
+    }
+  }
+}

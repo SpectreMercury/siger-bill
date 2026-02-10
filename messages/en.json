@@ -1,0 +1,815 @@
+{
+  "common": {
+    "appName": "Sieger",
+    "appSubtitle": "Billing Console",
+    "loading": "Loading...",
+    "save": "Save",
+    "saving": "Saving...",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "search": "Search",
+    "actions": "Actions",
+    "status": "Status",
+    "noData": "No data available",
+    "confirm": "Confirm",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "submit": "Submit",
+    "reset": "Reset",
+    "clear": "Clear",
+    "close": "Close",
+    "yes": "Yes",
+    "no": "No",
+    "all": "All",
+    "none": "None",
+    "active": "Active",
+    "inactive": "Inactive",
+    "suspended": "Suspended",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "view": "View",
+    "download": "Download",
+    "export": "Export",
+    "import": "Import",
+    "refresh": "Refresh",
+    "retry": "Retry",
+    "add": "Add",
+    "remove": "Remove",
+    "update": "Update",
+    "manage": "Manage",
+    "select": "Select",
+    "apply": "Apply",
+    "applyFilters": "Apply Filters",
+    "name": "Name",
+    "description": "Description",
+    "type": "Type",
+    "amount": "Amount",
+    "total": "Total",
+    "date": "Date",
+    "from": "From",
+    "to": "To",
+    "createdAt": "Created",
+    "updatedAt": "Updated",
+    "never": "Never",
+    "optional": "Optional",
+    "required": "Required",
+    "page": "Page",
+    "of": "of",
+    "showing": "Showing",
+    "items": "items",
+    "noResults": "No results found",
+    "searchPlaceholder": "Search...",
+    "selectOption": "Select an option",
+    "allItems": "All",
+    "email": "Email",
+    "roles": "Roles",
+    "currency": "Currency",
+    "provider": "Provider",
+    "allProviders": "All Providers",
+    "month": "Month",
+    "selectMonth": "Select month",
+    "customer": "Customer",
+    "allCustomers": "All Customers",
+    "selectCustomer": "Select customer"
+  },
+  "auth": {
+    "signIn": "Sign in",
+    "signOut": "Sign out",
+    "email": "Email",
+    "password": "Password",
+    "continue": "Continue",
+    "enterCredentials": "Enter your credentials to access your account",
+    "demoCredentials": "Demo credentials",
+    "loginFailed": "Login failed",
+    "invalidCredentials": "Invalid email or password",
+    "profile": "Profile",
+    "copyright": "Sieger GCP Reseller Console"
+  },
+  "login": {
+    "hero": {
+      "title1": "Enterprise",
+      "title2": "Cloud Billing",
+      "title3": "Platform",
+      "description": "Multi-cloud cost management and billing automation for GCP, AWS, and Azure resellers."
+    }
+  },
+  "nav": {
+    "main": {
+      "dashboard": "Dashboard",
+      "invoices": "Invoices",
+      "settings": "Settings"
+    },
+    "admin": {
+      "title": "Administration",
+      "customers": "Customers",
+      "billingAccounts": "Billing Accounts",
+      "projects": "Projects",
+      "productGroups": "Product Groups",
+      "pricingLists": "Pricing Lists",
+      "credits": "Credits",
+      "specialRules": "Special Rules",
+      "invoiceRuns": "Invoice Runs",
+      "payments": "Payments",
+      "rawCostImports": "Cost Imports",
+      "reconciliation": "Reconciliation",
+      "users": "Users",
+      "auditLogs": "Audit Logs"
+    }
+  },
+  "header": {
+    "notifications": "Notifications",
+    "help": "Help",
+    "theme": {
+      "toggle": "Toggle theme",
+      "light": "Light",
+      "dark": "Dark",
+      "system": "System"
+    },
+    "language": {
+      "toggle": "Switch language",
+      "en": "English",
+      "zh": "Chinese"
+    }
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "subtitle": "Billing analytics and revenue overview",
+    "welcome": "Welcome back",
+    "overview": "Overview",
+    "recentActivity": "Recent Activity",
+    "quickActions": "Quick Actions",
+    "revenueTrends": "Revenue Trends",
+    "revenueByProvider": "Revenue by Provider",
+    "topProductGroups": "Top Product Groups",
+    "topCustomers": "Top Customers",
+    "noDataTitle": "No Data Available",
+    "noDataDescription": "No billing data is available for the selected period. Run an invoice run to generate analytics data.",
+    "kpi": {
+      "netRevenue": "Net Revenue",
+      "netRevenueDesc": "Final billed amount",
+      "listAmount": "List Amount",
+      "listAmountDesc": "Before discounts",
+      "discounts": "Discounts",
+      "discountsDesc": "Direct + Tier discounts",
+      "creditsApplied": "Credits Applied",
+      "creditsAppliedDesc": "Credits burned",
+      "grossMargin": "Gross Margin",
+      "grossMarginDesc": "% margin"
+    },
+    "table": {
+      "rank": "Rank",
+      "customer": "Customer",
+      "revenue": "Revenue",
+      "growth": "Growth",
+      "invoices": "Invoices",
+      "noCustomerData": "No customer data available"
+    }
+  },
+  "invoices": {
+    "title": "Invoices",
+    "subtitle": "Manage and export customer invoices",
+    "invoiceNumber": "Invoice #",
+    "customer": "Customer",
+    "billingMonth": "Billing Month",
+    "amount": "Amount",
+    "total": "Total",
+    "status": "Status",
+    "issueDate": "Issue Date",
+    "dueDate": "Due Date",
+    "locked": "Locked",
+    "lockedOnly": "Locked Only",
+    "unlockedOnly": "Unlocked Only",
+    "statuses": {
+      "all": "All Statuses",
+      "draft": "Draft",
+      "issued": "Issued",
+      "paid": "Paid",
+      "cancelled": "Cancelled",
+      "locked": "Locked"
+    },
+    "actions": {
+      "view": "View Invoice",
+      "export": "Export",
+      "lock": "Lock Invoice"
+    },
+    "summary": {
+      "totalInvoices": "Total Invoices",
+      "draft": "Draft",
+      "issued": "Issued",
+      "paid": "Paid"
+    },
+    "noInvoices": "No invoices found",
+    "notFound": "Invoice not found",
+    "noPermission": "You do not have permission to view this invoice",
+    "loadFailed": "Failed to load invoice",
+    "alreadyLocked": "Invoice is already locked",
+    "lockFailed": "Failed to lock invoice",
+    "showing": "Showing {from} to {to} of {total} invoices"
+  },
+  "customers": {
+    "title": "Customers",
+    "subtitle": "Manage customer accounts and settings",
+    "name": "Name",
+    "externalId": "External ID",
+    "domain": "Domain",
+    "status": "Status",
+    "currency": "Currency",
+    "paymentTerms": "Payment Terms",
+    "paymentTermsDays": "Payment Terms (days)",
+    "contact": "Contact",
+    "contactEmail": "Contact Email",
+    "primaryContactEmail": "Primary Contact Email",
+    "statuses": {
+      "active": "Active",
+      "suspended": "Suspended",
+      "terminated": "Terminated"
+    },
+    "actions": {
+      "create": "Add Customer",
+      "edit": "Edit Customer",
+      "view": "View",
+      "viewDetails": "View Details"
+    },
+    "modal": {
+      "createTitle": "New Customer",
+      "editTitle": "Edit Customer"
+    },
+    "searchPlaceholder": "Search customers...",
+    "noCustomers": "No customers found",
+    "notFound": "Customer not found",
+    "loadFailed": "Failed to load customers",
+    "saveFailed": "Failed to save customer",
+    "tabs": {
+      "projects": "Projects",
+      "pricing": "Pricing",
+      "credits": "Credits",
+      "invoices": "Invoices"
+    }
+  },
+  "users": {
+    "title": "Users",
+    "subtitle": "Manage system users and their permissions",
+    "name": "Name",
+    "firstName": "First Name",
+    "lastName": "Last Name",
+    "email": "Email",
+    "roles": "Roles",
+    "role": "Role",
+    "status": "Status",
+    "lastLogin": "Last Login",
+    "password": "Password",
+    "customerAccess": "Customer Access",
+    "customerAccessNote": "Assign this user to a customer to restrict their data access. Users without a customer assignment cannot view any customer data.",
+    "noCustomerAssigned": "-- No customer assigned --",
+    "restrictedNote": "This user will only be able to view data for the selected customer.",
+    "actions": {
+      "create": "Add User",
+      "edit": "Edit User",
+      "manage": "Manage",
+      "deactivate": "Deactivate",
+      "activate": "Activate"
+    },
+    "modal": {
+      "createTitle": "New User",
+      "editTitle": "Edit User",
+      "basicInfo": "Basic Information",
+      "rolePermissions": "Role & Permissions"
+    },
+    "roles": {
+      "super_admin": "Super Admin",
+      "super_admin_desc": "Complete system control with all permissions",
+      "admin": "Administrator",
+      "admin_desc": "Administrative access with most permissions",
+      "finance": "Finance",
+      "finance_desc": "Finance team member with billing access",
+      "viewer": "Viewer",
+      "viewer_desc": "Read-only access to view data"
+    },
+    "placeholders": {
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john@example.com",
+      "chooseRole": "Choose a role..."
+    },
+    "passwordHint": "Min 8 chars, uppercase, lowercase, number",
+    "searchPlaceholder": "Search users...",
+    "noUsers": "No users found",
+    "loadFailed": "Failed to load users"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Manage your account settings",
+    "appearance": "Appearance",
+    "language": "Language",
+    "notifications": "Notifications",
+    "security": "Security",
+    "profile": "Profile",
+    "changePassword": "Change Password",
+    "currentPassword": "Current Password",
+    "newPassword": "New Password",
+    "confirmPassword": "Confirm New Password",
+    "placeholders": {
+      "currentPassword": "Enter your current password",
+      "newPassword": "Min 8 chars, uppercase, lowercase, number",
+      "confirmPassword": "Re-enter your new password"
+    },
+    "noRoles": "No roles assigned",
+    "passwordRequirements": "Password requirements: at least 8 characters, one uppercase letter, one lowercase letter, and one number."
+  },
+  "projects": {
+    "title": "Projects",
+    "subtitle": "Manage cloud provider projects and customer bindings",
+    "projectId": "Project ID",
+    "projectName": "Project Name",
+    "billingAccount": "Billing Account",
+    "status": "Status",
+    "statuses": {
+      "active": "Active",
+      "suspended": "Suspended",
+      "notFound": "Not Found",
+      "noBilling": "No Billing"
+    },
+    "actions": {
+      "create": "Create",
+      "edit": "Edit"
+    },
+    "modal": {
+      "createTitle": "Create Project",
+      "editTitle": "Edit Project"
+    },
+    "searchPlaceholder": "Search projects...",
+    "noProjects": "No projects found",
+    "loadFailed": "Failed to load projects",
+    "saveFailed": "Failed to save project",
+    "placeholders": {
+      "projectId": "my-gcp-project-id",
+      "projectName": "My Project"
+    },
+    "hints": {
+      "projectId": "The unique project identifier from your cloud provider",
+      "emptyName": "Leave empty to use Project ID as display name"
+    }
+  },
+  "billingAccounts": {
+    "title": "Billing Accounts",
+    "subtitle": "Manage cloud provider billing accounts",
+    "name": "Name",
+    "billingAccountId": "Billing Account ID",
+    "projectCount": "Projects",
+    "searchPlaceholder": "Search billing accounts...",
+    "noAccounts": "No billing accounts found",
+    "notFound": "Billing account not found",
+    "loadFailed": "Failed to load billing accounts",
+    "createFailed": "Failed to create billing account",
+    "updateFailed": "Failed to update billing account",
+    "deleteFailed": "Failed to delete billing account",
+    "actions": {
+      "create": "Add Account"
+    },
+    "modal": {
+      "createTitle": "Add Billing Account",
+      "editTitle": "Edit Billing Account",
+      "deleteTitle": "Delete Billing Account",
+      "deleteConfirm": "Are you sure you want to delete \"{name}\"? This action cannot be undone."
+    },
+    "detail": {
+      "info": "Account Information",
+      "projects": "Associated Projects",
+      "noProjects": "No projects associated",
+      "noProjectsHint": "Projects can be added from the Projects page"
+    },
+    "placeholders": {
+      "billingAccountId": "e.g., 01A2B3-C4D5E6-F78901",
+      "name": "e.g., Production Billing"
+    },
+    "hints": {
+      "billingAccountId": "The GCP billing account ID (format: XXXXXX-XXXXXX-XXXXXX)",
+      "name": "Optional display name for this billing account"
+    }
+  },
+  "productGroups": {
+    "title": "Product Groups",
+    "subtitle": "Group billing items into categories (e.g. Compute, Storage, Network) for clearer invoices",
+    "code": "Code",
+    "groupCode": "Group Code",
+    "name": "Name",
+    "displayName": "Display Name",
+    "description": "Description",
+    "billingItems": "Billing Items",
+    "pricingRules": "Pricing Rules",
+    "actions": {
+      "create": "Create Group",
+      "manageItems": "Manage Items",
+      "addItems": "Add Items"
+    },
+    "modal": {
+      "createTitle": "Create Product Group",
+      "createDescription": "Create a group to categorize billing items. After creating, you can add billing items from \"Cost Imports\" to this group.",
+      "addItemsTitle": "Add Billing Items to Group",
+      "addItemsDescription": "Search for billing items from your cost imports. Items must be imported via \"Cost Imports\" first before they appear here.",
+      "removeItemTitle": "Remove Item from Group",
+      "removeItemConfirm": "Are you sure you want to remove this billing item from the group?"
+    },
+    "detail": {
+      "billingItemsTitle": "Billing Items in This Group",
+      "noItemsYet": "No billing items yet. Click \"Add Items\" to add items from your cost imports.",
+      "itemCount": "{count} billing item(s) in this group"
+    },
+    "table": {
+      "itemId": "Item ID",
+      "itemName": "Item Name",
+      "cloudService": "Cloud Service",
+      "unit": "Unit"
+    },
+    "search": {
+      "placeholder": "Search billing items...",
+      "noResults": "No billing items found.",
+      "noResultsHint": "Make sure you have imported cost data via \"Cost Imports\" first.",
+      "enterTerm": "Enter a search term to find billing items",
+      "searchHint": "Search by item name, ID, or cloud service name"
+    },
+    "placeholders": {
+      "code": "e.g. COMPUTE, STORAGE, NETWORK",
+      "name": "e.g. Compute Services, Cloud Storage",
+      "description": "What types of billing items belong in this group?"
+    },
+    "hints": {
+      "code": "A short code used in reports",
+      "name": "Name shown on invoices"
+    },
+    "searchPlaceholder": "Search groups...",
+    "noGroups": "No product groups yet. Click 'Create Group' to add your first group.",
+    "loadFailed": "Failed to load product groups",
+    "itemsUnit": "items",
+    "rulesUnit": "rules",
+    "selected": "{count} item(s) selected",
+    "adding": "Adding...",
+    "addCount": "Add {count} Item(s)"
+  },
+  "pricingLists": {
+    "title": "Pricing Lists",
+    "subtitle": "Manage customer pricing rules",
+    "name": "Name",
+    "rules": "Rules",
+    "rulesCount": "rules",
+    "searchPlaceholder": "Search pricing lists...",
+    "noLists": "No pricing lists found",
+    "notFound": "Pricing list not found",
+    "loadFailed": "Failed to load pricing lists",
+    "createFailed": "Failed to create pricing list",
+    "updateFailed": "Failed to update pricing list",
+    "deleteFailed": "Failed to delete pricing list",
+    "actions": {
+      "create": "Add Pricing List",
+      "manageRules": "Rules"
+    },
+    "modal": {
+      "createTitle": "Create Pricing List",
+      "editTitle": "Edit Pricing List",
+      "deleteTitle": "Delete Pricing List",
+      "deleteConfirm": "Are you sure you want to delete \"{name}\"? All pricing rules will also be deleted."
+    },
+    "placeholders": {
+      "name": "e.g., Standard Pricing 2025"
+    },
+    "detail": {
+      "rules": "Pricing Rules",
+      "addRule": "Add Rule",
+      "noRules": "No pricing rules defined yet",
+      "skuGroup": "SKU Group",
+      "allSkus": "All SKUs (Default)",
+      "discount": "Discount",
+      "priority": "Priority",
+      "effectivePeriod": "Effective Period",
+      "always": "Always",
+      "addRuleTitle": "Add Pricing Rule",
+      "selectSkuGroup": "Select SKU group...",
+      "skuGroupHint": "Leave empty to apply to all SKUs not covered by other rules",
+      "discountPercent": "Discount Percentage",
+      "discountHint": "e.g., 10 means 10% off the list price",
+      "effectiveStart": "Start Date",
+      "effectiveEnd": "End Date",
+      "priorityHint": "Lower number = higher priority",
+      "addRuleFailed": "Failed to add pricing rule",
+      "deleteRuleTitle": "Delete Pricing Rule",
+      "deleteRuleConfirm": "Are you sure you want to delete this pricing rule?",
+      "deleteRuleFailed": "Failed to delete pricing rule"
+    }
+  },
+  "credits": {
+    "title": "Credits",
+    "subtitle": "Manage customer credits and discounts",
+    "customer": "Customer",
+    "type": "Type",
+    "total": "Total",
+    "remaining": "Remaining",
+    "validFrom": "Valid From",
+    "validTo": "Valid To",
+    "status": "Status",
+    "types": {
+      "promotional": "Promotional",
+      "commitment": "Commitment",
+      "goodwill": "Goodwill",
+      "refund": "Refund"
+    },
+    "actions": {
+      "create": "Add Credit"
+    },
+    "modal": {
+      "createTitle": "New Credit"
+    },
+    "placeholders": {
+      "selectCustomer": "Select customer",
+      "amount": "1000.00",
+      "description": "Credit for promotional campaign..."
+    },
+    "searchPlaceholder": "Search credits...",
+    "noCredits": "No credits found",
+    "loadFailed": "Failed to load credits"
+  },
+  "specialRules": {
+    "title": "Special Rules",
+    "subtitle": "Configure custom billing rules"
+  },
+  "invoiceRuns": {
+    "title": "Invoice Runs",
+    "subtitle": "Generate and manage billing cycles",
+    "billingMonth": "Billing Month",
+    "provider": "Provider",
+    "status": "Status",
+    "invoices": "Invoices",
+    "totalAmount": "Total Amount",
+    "created": "Created",
+    "actions": {
+      "create": "New Invoice Run",
+      "execute": "Execute"
+    },
+    "modal": {
+      "createTitle": "New Invoice Run",
+      "executeTitle": "Execute Invoice Run",
+      "executeConfirm": "This will generate invoices for all customers based on cost data. This action may take a few minutes. Continue?"
+    },
+    "providerOptions": {
+      "all": "All Providers",
+      "gcp": "GCP",
+      "aws": "AWS",
+      "azure": "Azure",
+      "openai": "OpenAI",
+      "custom": "Custom"
+    },
+    "searchPlaceholder": "Search invoice runs...",
+    "noInvoiceRuns": "No invoice runs found",
+    "loadFailed": "Failed to load invoice runs"
+  },
+  "payments": {
+    "title": "Payments",
+    "subtitle": "Track and record invoice payments",
+    "paymentDate": "Payment Date",
+    "invoice": "Invoice",
+    "customer": "Customer",
+    "amount": "Amount",
+    "method": "Method",
+    "reference": "Reference",
+    "recordedBy": "Recorded By",
+    "balance": "Balance",
+    "paid": "Paid",
+    "notes": "Notes",
+    "methods": {
+      "select": "Select method",
+      "bankTransfer": "Bank Transfer",
+      "creditCard": "Credit Card",
+      "check": "Check",
+      "wireTransfer": "Wire Transfer",
+      "ach": "ACH",
+      "other": "Other"
+    },
+    "actions": {
+      "record": "Record Payment"
+    },
+    "modal": {
+      "title": "Record Payment"
+    },
+    "summary": {
+      "totalPayments": "Total Payments",
+      "totalAmount": "Total Amount"
+    },
+    "filters": {
+      "startDate": "Start Date",
+      "endDate": "End Date"
+    },
+    "placeholders": {
+      "selectInvoice": "Select unpaid invoice",
+      "reference": "e.g., TXN-123456",
+      "notes": "Optional notes about this payment"
+    },
+    "noPayments": "No payments recorded",
+    "loadFailed": "Failed to load payments",
+    "recording": "Recording..."
+  },
+  "costImports": {
+    "title": "Cost Imports",
+    "subtitle": "Import billing data from cloud providers. Imported data is used for invoice generation and can be categorized in \"Product Groups\".",
+    "importTime": "Import Time",
+    "month": "Month",
+    "source": "Source",
+    "rows": "Rows",
+    "totalCost": "Total Cost",
+    "status": "Status",
+    "importedBy": "Imported By",
+    "checksum": "Checksum",
+    "summary": {
+      "totalBatches": "Total Batches",
+      "totalRows": "Total Rows",
+      "totalCost": "Total Cost"
+    },
+    "filters": {
+      "month": "Month",
+      "source": "Source",
+      "allMonths": "All months",
+      "allSources": "All sources"
+    },
+    "noImports": "No cost data imported yet. Use the API or BigQuery integration to import billing data.",
+    "loadFailed": "Failed to load import batches"
+  },
+  "reconciliation": {
+    "title": "Reconciliation",
+    "subtitle": "Compare billing data with provider reports"
+  },
+  "auditLogs": {
+    "title": "Audit Logs",
+    "subtitle": "View system activity and changes"
+  },
+  "errors": {
+    "generic": "Something went wrong",
+    "notFound": "Not found",
+    "unauthorized": "Unauthorized",
+    "forbidden": "Forbidden",
+    "serverError": "Server error",
+    "loadFailed": "Failed to load data",
+    "saveFailed": "Failed to save data"
+  },
+  "validation": {
+    "required": "This field is required",
+    "invalidEmail": "Please enter a valid email address",
+    "minLength": "Must be at least {min} characters",
+    "maxLength": "Must be no more than {max} characters"
+  },
+  "help": {
+    "title": "Admin Help Guide",
+    "subtitle": "Learn how to use the Sieger Billing Console effectively",
+    "goTo": "Go to",
+    "flowDiagram": {
+      "title": "System Configuration Flow",
+      "subtitle": "This diagram shows how different modules connect and the recommended configuration order. Click any node to navigate to that module.",
+      "nodes": {
+        "customers": "Customers",
+        "billingAccounts": "Billing Accounts",
+        "projects": "Projects",
+        "productGroups": "Product Groups",
+        "pricingLists": "Pricing Lists",
+        "credits": "Credits",
+        "costImports": "Cost Imports",
+        "invoiceRuns": "Invoice Runs",
+        "invoices": "Invoices",
+        "reconciliation": "Reconciliation",
+        "payments": "Payments"
+      },
+      "phases": {
+        "foundation": "1. Foundation",
+        "setup": "2. Account Setup",
+        "config": "3. Configuration",
+        "import": "4. Data Import",
+        "generate": "5. Generate",
+        "review": "6. Review",
+        "collect": "7. Collection"
+      },
+      "legend": {
+        "customer": "Customer Data",
+        "infrastructure": "Infrastructure",
+        "pricing": "Pricing & Credits",
+        "catalog": "Product Catalog",
+        "data": "Data Import",
+        "processing": "Processing",
+        "output": "Output & Review"
+      },
+      "description": {
+        "title": "Configuration Flow Explained:",
+        "step1": "Create Customers first - they are the foundation of the billing system",
+        "step2": "Set up Billing Accounts from your cloud provider and link them to customers",
+        "step3": "Create Projects under billing accounts, then assign to customers",
+        "step4": "Configure Product Groups to categorize SKUs, and Pricing Lists with discount rules",
+        "step5": "Import cost data via Cost Imports - this requires projects and product groups",
+        "step6": "Run Invoice Runs to generate invoices using costs, pricing, and credits",
+        "step7": "Review generated invoices, reconcile with provider data, and record payments"
+      }
+    },
+    "quickStart": {
+      "title": "Quick Start Guide",
+      "description": "Follow these steps to set up your billing system:",
+      "step1": "Create customers in the Customers module",
+      "step2": "Set up billing accounts and link them to cloud providers",
+      "step3": "Create projects and assign them to customers",
+      "step4": "Configure product groups to categorize billing items",
+      "step5": "Set up pricing lists with discount rules for customers",
+      "step6": "Import cost data and run invoice batches"
+    },
+    "modulesTitle": "Module Guide",
+    "modules": {
+      "customers": {
+        "title": "Customers",
+        "description": "Manage customer accounts, contacts, and billing settings",
+        "step1": "Click 'Add Customer' to create a new customer",
+        "step2": "Configure payment terms and currency",
+        "step3": "Assign pricing lists and credits to customers"
+      },
+      "billingAccounts": {
+        "title": "Billing Accounts",
+        "description": "Manage cloud provider billing accounts (GCP, AWS, Azure)",
+        "step1": "Add billing account IDs from your cloud provider",
+        "step2": "Link billing accounts to your customers"
+      },
+      "projects": {
+        "title": "Projects",
+        "description": "Manage cloud projects and associate them with customers",
+        "step1": "Create projects using cloud provider project IDs",
+        "step2": "Assign projects to billing accounts",
+        "step3": "Link projects to customers for billing"
+      },
+      "productGroups": {
+        "title": "Product Groups",
+        "description": "Categorize billing items for clearer invoices",
+        "step1": "Create groups like Compute, Storage, Network",
+        "step2": "Import cost data first via Cost Imports",
+        "step3": "Add billing items to appropriate groups"
+      },
+      "pricingLists": {
+        "title": "Pricing Lists",
+        "description": "Configure customer-specific pricing and discounts",
+        "step1": "Create a pricing list (e.g., 'Standard 2025')",
+        "step2": "Add discount rules by product group",
+        "step3": "Assign pricing lists to customers"
+      },
+      "credits": {
+        "title": "Credits",
+        "description": "Manage customer credits and promotional balances",
+        "step1": "Add credits with type (promotional, commitment, etc.)",
+        "step2": "Credits are automatically applied during invoice runs"
+      },
+      "costImports": {
+        "title": "Cost Imports",
+        "description": "Import raw billing data from cloud providers",
+        "step1": "Use the API or BigQuery integration to import costs",
+        "step2": "Imported data is used for invoice generation"
+      },
+      "invoiceRuns": {
+        "title": "Invoice Runs",
+        "description": "Generate customer invoices from cost data",
+        "step1": "Select billing month and cloud provider",
+        "step2": "Execute the run to generate draft invoices",
+        "step3": "Review and lock invoices when ready"
+      },
+      "payments": {
+        "title": "Payments",
+        "description": "Record and track invoice payments",
+        "step1": "Select an unpaid invoice",
+        "step2": "Record payment with method and reference"
+      },
+      "reconciliation": {
+        "title": "Reconciliation",
+        "description": "Compare billing data with provider reports",
+        "step1": "Upload provider billing reports",
+        "step2": "Review discrepancies and resolve differences"
+      },
+      "users": {
+        "title": "User Management",
+        "description": "Manage system users and access permissions",
+        "step1": "Create users with appropriate roles",
+        "step2": "Assign customer scope to limit data access",
+        "step3": "Deactivate users when access is no longer needed"
+      },
+      "auditLogs": {
+        "title": "Audit Logs",
+        "description": "View all system activities and changes",
+        "step1": "Filter by date, user, or action type",
+        "step2": "Review changes for compliance purposes"
+      }
+    },
+    "roles": {
+      "title": "User Roles Explained",
+      "superAdmin": "Full system access with all permissions. Can manage all customers and system settings.",
+      "admin": "Administrative access within assigned customer scopes. Can manage customers, invoices, and configurations.",
+      "finance": "Finance team access for billing operations. Can view invoices, record payments, and manage credits.",
+      "viewer": "Read-only access to view data within assigned scopes. Cannot make any changes."
+    },
+    "tips": {
+      "title": "Tips & Best Practices",
+      "tip1": "Always lock invoices after review to prevent accidental changes",
+      "tip2": "Use product groups to organize billing items for clearer customer invoices",
+      "tip3": "Assign customer scopes to non-admin users to limit their data access",
+      "tip4": "Check audit logs regularly to monitor system changes"
+    }
+  }
+}
