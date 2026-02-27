@@ -20,6 +20,7 @@ import {
   Shield,
   HelpCircle,
   GitBranch,
+  Cloud,
 } from 'lucide-react';
 import Link from 'next/link';
 import { ConfigFlowDiagram } from '@/components/help/ConfigFlowDiagram';
@@ -37,6 +38,17 @@ export default function HelpPage() {
   const tn = useTranslations('nav');
 
   const modules: ModuleGuide[] = [
+    {
+      icon: <Cloud className="h-5 w-5" />,
+      titleKey: 'modules.gcpConnections.title',
+      descriptionKey: 'modules.gcpConnections.description',
+      href: '/admin/gcp-connections',
+      steps: [
+        'modules.gcpConnections.step1',
+        'modules.gcpConnections.step2',
+        'modules.gcpConnections.step3',
+      ],
+    },
     {
       icon: <Users className="h-5 w-5" />,
       titleKey: 'modules.customers.title',
@@ -207,6 +219,7 @@ export default function HelpPage() {
             <li>{t('quickStart.step4')}</li>
             <li>{t('quickStart.step5')}</li>
             <li>{t('quickStart.step6')}</li>
+            <li>{t('quickStart.step7')}</li>
           </ol>
         </div>
       </Card>
@@ -297,6 +310,10 @@ export default function HelpPage() {
           <li className="flex items-start gap-2">
             <span className="text-primary">•</span>
             {t('tips.tip4')}
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-primary">•</span>
+            {t('tips.tip5')}
           </li>
         </ul>
       </Card>

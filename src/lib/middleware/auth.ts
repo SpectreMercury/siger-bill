@@ -131,6 +131,53 @@ export function withAuth(handler: AuthenticatedHandler) {
 }
 
 /**
+ * Wrap an API route handler with authentication, also passing resolved route params.
+ * Use this for dynamic routes (e.g. /api/admin/gcp-connections/[id]) that need
+ * context.params but don't require a specific permission check.
+ *
+ * Usage:
+ * ```
+ * export const GET = withAuthParams(async (request, context) => {
+ *   const { id } = context.params;
+ * });
+ * ```
+ */
+export function withAuthParams(handler: AuthenticatedHandlerWithParams) {
+  return async (request: NextRequest, routeParams?: RouteParams): Promise<NextResponse> => {
+    const { ipAddress, userAgent, requestId } = extractRequestMetadata(request);
+
+    const authHeader = request.headers.get('authorization');
+    const token = extractTokenFromHeader(authHeader);
+
+    if (!token) {
+      return errorResponse({ error: 'Authentication required', code: 'AUTH_REQUIRED' }, 401);
+    }
+
+    const payload = verifyToken(token);
+    if (!payload) {
+      return errorResponse({ error: 'Invalid or expired token', code: 'INVALID_TOKEN' }, 401);
+    }
+
+    const auth = await loadAuthContext(payload.sub);
+    if (!auth) {
+      return errorResponse({ error: 'User not found or inactive', code: 'USER_INACTIVE' }, 401);
+    }
+
+    const resolvedParams = routeParams?.params ? await routeParams.params : {};
+
+    const extendedContext: ExtendedRequestContext = {
+      auth,
+      requestId,
+      ipAddress,
+      userAgent,
+      params: resolvedParams,
+    };
+
+    return handler(request, extendedContext);
+  };
+}
+
+/**
  * Configuration for permission-based authorization
  */
 interface PermissionConfig {

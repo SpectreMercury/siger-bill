@@ -36,6 +36,7 @@ export const createCustomerSchema = z.object({
   paymentTermsDays: z.number().int().min(0).max(365).default(30),
   primaryContactName: z.string().max(255).optional(),
   primaryContactEmail: z.string().email().optional(),
+  gcpConnectionId: z.string().uuid().optional().nullable(),
 });
 
 /**
@@ -51,6 +52,7 @@ export const updateCustomerSchema = z.object({
   primaryContactName: z.string().max(255).optional().nullable(),
   primaryContactEmail: z.string().email().optional().nullable(),
   status: z.enum(['ACTIVE', 'SUSPENDED', 'TERMINATED']).optional(),
+  gcpConnectionId: z.string().uuid().optional().nullable(),
 });
 
 /**
@@ -136,7 +138,9 @@ export const createBillingAccountSchema = z.object({
  */
 export const createProjectSchema = z.object({
   projectId: z.string().min(1, 'Project ID is required').max(100),
+  projectNumber: z.string().max(50).optional().nullable(),
   name: z.string().max(255).optional(),
+  iamRole: z.string().max(500).optional().nullable(),
   billingAccountId: z.string().max(100).optional(),
 });
 
@@ -198,6 +202,10 @@ export const createSkuSchema = z.object({
   serviceId: z.string().min(1, 'Service ID is required').max(100),
   serviceDescription: z.string().min(1, 'Service description is required').max(255),
   unit: z.string().max(50).optional(),
+  // GCP product taxonomy (mirrors Cloud Billing API category field)
+  resourceFamily: z.string().max(100).optional().nullable(),
+  resourceGroup: z.string().max(100).optional().nullable(),
+  usageType: z.string().max(100).optional().nullable(),
 });
 
 /**
@@ -232,16 +240,47 @@ export const createPricingListSchema = z.object({
 });
 
 /**
- * Pricing rule creation schema
+ * Tiered pricing tier definition
+ * Each tier covers a spend range [from, to) with either a discount rate or unit price.
+ * The final (unbounded) tier should have to = null.
  */
-export const createPricingRuleSchema = z.object({
-  ruleType: z.enum(['LIST_DISCOUNT']).default('LIST_DISCOUNT'),
-  discountRate: z.number().min(0).max(2), // 0.90 = 90% of list (10% discount), can go > 1 for markup
-  skuGroupId: z.string().uuid().optional().nullable(), // null = applies to all
-  effectiveStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional().nullable(),
-  effectiveEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional().nullable(),
-  priority: z.number().int().min(0).max(9999).default(100),
+export const pricingTierSchema = z.object({
+  from: z.number().min(0),
+  to: z.number().positive().nullable().optional(), // null = unbounded upper limit
+  rate: z.number().min(0).max(2).optional().nullable(),      // multiplier: 0.90 = 90% of list
+  unitPrice: z.number().min(0).optional().nullable(),         // fixed price per unit
 });
+
+/**
+ * Pricing rule creation schema
+ *
+ * Rule types:
+ *   LIST_DISCOUNT: discountRate required (0.90 = 90% of list = 10% off)
+ *   UNIT_PRICE:    unitPrice required (fixed price per unit)
+ *   TIERED:        tiers required (array of threshold bands)
+ */
+export const createPricingRuleSchema = z
+  .object({
+    ruleType: z.enum(['LIST_DISCOUNT', 'UNIT_PRICE', 'TIERED']).default('LIST_DISCOUNT'),
+    discountRate: z.number().min(0).max(2).optional().nullable(),
+    unitPrice: z.number().min(0).optional().nullable(),
+    tiers: z.array(pricingTierSchema).min(1).optional().nullable(),
+    skuGroupId: z.string().uuid().optional().nullable(),
+    effectiveStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional().nullable(),
+    effectiveEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional().nullable(),
+    priority: z.number().int().min(0).max(9999).default(100),
+  })
+  .superRefine((data, ctx) => {
+    if (data.ruleType === 'LIST_DISCOUNT' && (data.discountRate == null)) {
+      ctx.addIssue({ code: 'custom', path: ['discountRate'], message: 'discountRate is required for LIST_DISCOUNT rules' });
+    }
+    if (data.ruleType === 'UNIT_PRICE' && (data.unitPrice == null)) {
+      ctx.addIssue({ code: 'custom', path: ['unitPrice'], message: 'unitPrice is required for UNIT_PRICE rules' });
+    }
+    if (data.ruleType === 'TIERED' && (!data.tiers || data.tiers.length === 0)) {
+      ctx.addIssue({ code: 'custom', path: ['tiers'], message: 'tiers is required for TIERED rules' });
+    }
+  });
 
 // ============================================================================
 // Phase 3.3: Credit Schemas

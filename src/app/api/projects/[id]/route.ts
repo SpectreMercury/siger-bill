@@ -23,6 +23,8 @@ import { z } from 'zod';
 
 const updateProjectSchema = z.object({
   name: z.string().max(255).nullable().optional(),
+  projectNumber: z.string().max(50).nullable().optional(),
+  iamRole: z.string().max(500).nullable().optional(),
   status: z.enum(['ACTIVE', 'SUSPENDED', 'NOT_FOUND', 'NO_BILLING']).optional(),
 });
 
@@ -67,7 +69,9 @@ export const GET = withPermission(
       return success({
         id: project.id,
         projectId: project.projectId,
+        projectNumber: project.projectNumber,
         name: project.name,
+        iamRole: project.iamRole,
         status: project.status,
         billingAccount: project.billingAccount
           ? {
@@ -125,6 +129,12 @@ export const PUT = withPermission(
       if (data.name !== undefined) {
         updateData.name = data.name || null;
       }
+      if (data.projectNumber !== undefined) {
+        updateData.projectNumber = data.projectNumber || null;
+      }
+      if (data.iamRole !== undefined) {
+        updateData.iamRole = data.iamRole || null;
+      }
       if (data.status !== undefined) {
         updateData.status = data.status;
       }
@@ -155,7 +165,9 @@ export const PUT = withPermission(
       return success({
         id: project.id,
         projectId: project.projectId,
+        projectNumber: project.projectNumber,
         name: project.name,
+        iamRole: project.iamRole,
         status: project.status,
         billingAccount: project.billingAccount
           ? {

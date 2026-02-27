@@ -25,6 +25,7 @@ import {
   ScrollText,
   DollarSign,
   Cog,
+  Cloud,
 } from 'lucide-react';
 
 interface NavItem {
@@ -145,6 +146,13 @@ const adminNavItems: NavItem[] = [
     href: '/admin/audit-logs',
     icon: <ScrollText className="h-5 w-5" />,
     permission: { resource: 'audit_logs', action: 'read' },
+    adminOnly: true,
+  },
+  {
+    nameKey: 'gcpConnections',
+    href: '/admin/gcp-connections',
+    icon: <Cloud className="h-5 w-5" />,
+    roles: ['super_admin'],
     adminOnly: true,
   },
 ];

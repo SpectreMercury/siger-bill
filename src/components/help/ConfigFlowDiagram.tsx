@@ -15,42 +15,48 @@ interface FlowNode {
 interface FlowArrow {
   from: string;
   to: string;
-  label?: string;
 }
 
 export function ConfigFlowDiagram() {
   const t = useTranslations('help.flowDiagram');
 
-  // Node definitions with positions
+  // Node definitions — Row 0 is GCP setup, rows 1-7 are the billing workflow
   const nodes: FlowNode[] = [
+    // Row 0 - System Setup
+    { id: 'gcpConnections', x: 400, y: 60, labelKey: 'gcpConnections', href: '/admin/gcp-connections', color: '#6b7280' },
+
     // Row 1 - Foundation
-    { id: 'customers', x: 400, y: 60, labelKey: 'customers', href: '/admin/customers', color: '#3b82f6' },
+    { id: 'customers', x: 400, y: 160, labelKey: 'customers', href: '/admin/customers', color: '#3b82f6' },
 
     // Row 2 - Infrastructure
-    { id: 'billingAccounts', x: 200, y: 160, labelKey: 'billingAccounts', href: '/admin/billing-accounts', color: '#8b5cf6' },
-    { id: 'pricingLists', x: 600, y: 160, labelKey: 'pricingLists', href: '/admin/pricing-lists', color: '#f59e0b' },
+    { id: 'billingAccounts', x: 200, y: 260, labelKey: 'billingAccounts', href: '/admin/billing-accounts', color: '#8b5cf6' },
+    { id: 'pricingLists', x: 600, y: 260, labelKey: 'pricingLists', href: '/admin/pricing-lists', color: '#f59e0b' },
 
     // Row 3 - Resources
-    { id: 'projects', x: 200, y: 260, labelKey: 'projects', href: '/admin/projects', color: '#8b5cf6' },
-    { id: 'productGroups', x: 400, y: 260, labelKey: 'productGroups', href: '/admin/sku-groups', color: '#10b981' },
-    { id: 'credits', x: 600, y: 260, labelKey: 'credits', href: '/admin/credits', color: '#f59e0b' },
+    { id: 'projects', x: 200, y: 360, labelKey: 'projects', href: '/admin/projects', color: '#8b5cf6' },
+    { id: 'productGroups', x: 400, y: 360, labelKey: 'productGroups', href: '/admin/sku-groups', color: '#10b981' },
+    { id: 'credits', x: 600, y: 360, labelKey: 'credits', href: '/admin/credits', color: '#f59e0b' },
 
     // Row 4 - Data Input
-    { id: 'costImports', x: 300, y: 360, labelKey: 'costImports', href: '/admin/raw-cost-imports', color: '#6366f1' },
+    { id: 'costImports', x: 300, y: 460, labelKey: 'costImports', href: '/admin/raw-cost-imports', color: '#6366f1' },
 
     // Row 5 - Processing
-    { id: 'invoiceRuns', x: 400, y: 460, labelKey: 'invoiceRuns', href: '/admin/invoice-runs', color: '#ec4899' },
+    { id: 'invoiceRuns', x: 400, y: 560, labelKey: 'invoiceRuns', href: '/admin/invoice-runs', color: '#ec4899' },
 
     // Row 6 - Output
-    { id: 'invoices', x: 300, y: 560, labelKey: 'invoices', href: '/invoices', color: '#ef4444' },
-    { id: 'reconciliation', x: 500, y: 560, labelKey: 'reconciliation', href: '/admin/reconciliation', color: '#14b8a6' },
+    { id: 'invoices', x: 300, y: 660, labelKey: 'invoices', href: '/invoices', color: '#ef4444' },
+    { id: 'reconciliation', x: 500, y: 660, labelKey: 'reconciliation', href: '/admin/reconciliation', color: '#14b8a6' },
 
     // Row 7 - Final
-    { id: 'payments', x: 300, y: 660, labelKey: 'payments', href: '/admin/payments', color: '#22c55e' },
+    { id: 'payments', x: 300, y: 760, labelKey: 'payments', href: '/admin/payments', color: '#22c55e' },
   ];
 
   // Arrow definitions
   const arrows: FlowArrow[] = [
+    // GCP connections feeds into billing account setup and project info
+    { from: 'gcpConnections', to: 'billingAccounts' },
+    { from: 'gcpConnections', to: 'projects' },
+
     // Customer connections
     { from: 'customers', to: 'billingAccounts' },
     { from: 'customers', to: 'pricingLists' },
@@ -83,38 +89,28 @@ export function ConfigFlowDiagram() {
 
   const getNode = (id: string) => nodes.find(n => n.id === id);
 
-  // Calculate arrow path with curves
   const getArrowPath = (from: FlowNode, to: FlowNode) => {
     const nodeWidth = 140;
     const nodeHeight = 40;
 
-    const fromCenterX = from.x;
-    const fromCenterY = from.y;
-    const toCenterX = to.x;
-    const toCenterY = to.y;
+    let startX = from.x;
+    let startY = from.y + nodeHeight / 2;
+    let endX = to.x;
+    let endY = to.y - nodeHeight / 2;
 
-    // Determine connection points
-    let startX = fromCenterX;
-    let startY = fromCenterY + nodeHeight / 2;
-    let endX = toCenterX;
-    let endY = toCenterY - nodeHeight / 2;
-
-    // Adjust for horizontal connections
-    if (Math.abs(fromCenterY - toCenterY) < 50) {
-      if (fromCenterX < toCenterX) {
-        startX = fromCenterX + nodeWidth / 2;
-        endX = toCenterX - nodeWidth / 2;
+    if (Math.abs(from.y - to.y) < 50) {
+      if (from.x < to.x) {
+        startX = from.x + nodeWidth / 2;
+        endX = to.x - nodeWidth / 2;
       } else {
-        startX = fromCenterX - nodeWidth / 2;
-        endX = toCenterX + nodeWidth / 2;
+        startX = from.x - nodeWidth / 2;
+        endX = to.x + nodeWidth / 2;
       }
-      startY = fromCenterY;
-      endY = toCenterY;
+      startY = from.y;
+      endY = to.y;
     }
 
-    // Calculate control points for curved lines
     const midY = (startY + endY) / 2;
-
     return `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`;
   };
 
@@ -123,6 +119,10 @@ export function ConfigFlowDiagram() {
       <div className="min-w-[800px]">
         {/* Legend */}
         <div className="flex flex-wrap gap-4 mb-4 text-xs">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded bg-gray-500" />
+            <span className="text-muted-foreground">{t('legend.system')}</span>
+          </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded bg-blue-500" />
             <span className="text-muted-foreground">{t('legend.customer')}</span>
@@ -154,12 +154,11 @@ export function ConfigFlowDiagram() {
         </div>
 
         <svg
-          viewBox="0 0 800 720"
+          viewBox="0 0 800 820"
           className="w-full h-auto"
-          style={{ maxHeight: '700px' }}
+          style={{ maxHeight: '800px' }}
         >
           <defs>
-            {/* Arrow marker */}
             <marker
               id="arrowhead"
               markerWidth="10"
@@ -173,8 +172,6 @@ export function ConfigFlowDiagram() {
                 className="fill-muted-foreground/50"
               />
             </marker>
-
-            {/* Drop shadow filter */}
             <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
               <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.1" />
             </filter>
@@ -202,7 +199,6 @@ export function ConfigFlowDiagram() {
           {nodes.map((node) => (
             <Link key={node.id} href={node.href}>
               <g className="cursor-pointer group">
-                {/* Node background */}
                 <rect
                   x={node.x - 70}
                   y={node.y - 20}
@@ -213,8 +209,6 @@ export function ConfigFlowDiagram() {
                   filter="url(#shadow)"
                   className="transition-all duration-200 group-hover:opacity-90"
                 />
-
-                {/* Node border on hover */}
                 <rect
                   x={node.x - 70}
                   y={node.y - 20}
@@ -226,8 +220,6 @@ export function ConfigFlowDiagram() {
                   strokeWidth="0"
                   className="transition-all duration-200 group-hover:stroke-[2]"
                 />
-
-                {/* Node text */}
                 <text
                   x={node.x}
                   y={node.y + 5}
@@ -242,30 +234,33 @@ export function ConfigFlowDiagram() {
           ))}
 
           {/* Phase labels */}
-          <text x="50" y="65" className="fill-muted-foreground text-[10px] font-medium">
+          <text x="50" y="65" className="fill-muted-foreground text-[10px] font-medium" style={{ fontSize: '10px', fill: '#9ca3af' }}>
+            {t('phases.system')}
+          </text>
+          <text x="50" y="165" className="fill-muted-foreground text-[10px] font-medium" style={{ fontSize: '10px', fill: '#9ca3af' }}>
             {t('phases.foundation')}
           </text>
-          <text x="50" y="165" className="fill-muted-foreground text-[10px] font-medium">
+          <text x="50" y="265" className="fill-muted-foreground text-[10px] font-medium" style={{ fontSize: '10px', fill: '#9ca3af' }}>
             {t('phases.setup')}
           </text>
-          <text x="50" y="265" className="fill-muted-foreground text-[10px] font-medium">
+          <text x="50" y="365" className="fill-muted-foreground text-[10px] font-medium" style={{ fontSize: '10px', fill: '#9ca3af' }}>
             {t('phases.config')}
           </text>
-          <text x="50" y="365" className="fill-muted-foreground text-[10px] font-medium">
+          <text x="50" y="465" className="fill-muted-foreground text-[10px] font-medium" style={{ fontSize: '10px', fill: '#9ca3af' }}>
             {t('phases.import')}
           </text>
-          <text x="50" y="465" className="fill-muted-foreground text-[10px] font-medium">
+          <text x="50" y="565" className="fill-muted-foreground text-[10px] font-medium" style={{ fontSize: '10px', fill: '#9ca3af' }}>
             {t('phases.generate')}
           </text>
-          <text x="50" y="565" className="fill-muted-foreground text-[10px] font-medium">
+          <text x="50" y="665" className="fill-muted-foreground text-[10px] font-medium" style={{ fontSize: '10px', fill: '#9ca3af' }}>
             {t('phases.review')}
           </text>
-          <text x="50" y="665" className="fill-muted-foreground text-[10px] font-medium">
+          <text x="50" y="765" className="fill-muted-foreground text-[10px] font-medium" style={{ fontSize: '10px', fill: '#9ca3af' }}>
             {t('phases.collect')}
           </text>
 
           {/* Phase divider lines */}
-          {[110, 210, 310, 410, 510, 610].map((y, i) => (
+          {[110, 210, 310, 410, 510, 610, 710].map((y, i) => (
             <line
               key={i}
               x1="40"
@@ -290,6 +285,7 @@ export function ConfigFlowDiagram() {
             <li>{t('description.step5')}</li>
             <li>{t('description.step6')}</li>
             <li>{t('description.step7')}</li>
+            <li>{t('description.step8')}</li>
           </ol>
         </div>
       </div>

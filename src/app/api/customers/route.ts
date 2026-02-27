@@ -74,6 +74,7 @@ export const GET = withPermission(
             paymentTermsDays: true,
             primaryContactName: true,
             primaryContactEmail: true,
+            gcpConnectionId: true,
             createdAt: true,
             updatedAt: true,
           },

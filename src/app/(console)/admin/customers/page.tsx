@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { ColumnDef } from '@tanstack/react-table';
 import { api } from '@/lib/client/api';
 import { Customer, PaginatedResponse } from '@/lib/client/types';
+import { useAuth } from '@/contexts/AuthContext';
 import { DataTable, StatusBadge, Alert } from '@/components/ui';
 import { Button } from '@/components/ui/shadcn/button';
 import { Card } from '@/components/ui/shadcn/card';
@@ -19,8 +20,15 @@ import {
 } from '@/components/ui/shadcn/select';
 import { Modal } from '@/components/ui/Modal';
 import { Can } from '@/components/auth';
-import { Plus, ExternalLink } from 'lucide-react';
+import { Plus, ExternalLink, Cloud } from 'lucide-react';
 import Link from 'next/link';
+
+interface GcpConnectionOption {
+  id: string;
+  name: string;
+  group: string;
+  authType: string;
+}
 
 interface CustomerFormData {
   name: string;
@@ -29,11 +37,14 @@ interface CustomerFormData {
   paymentTermsDays: number;
   primaryContactEmail: string;
   status: 'ACTIVE' | 'SUSPENDED' | 'TERMINATED';
+  gcpConnectionId: string | null;
 }
 
 export default function CustomersPage() {
   const t = useTranslations('customers');
   const tc = useTranslations('common');
+  const { isSuperAdmin } = useAuth();
+
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,13 +57,16 @@ export default function CustomersPage() {
     paymentTermsDays: 30,
     primaryContactEmail: '',
     status: 'ACTIVE',
+    gcpConnectionId: null,
   });
   const [isSaving, setIsSaving] = useState(false);
+
+  // GCP connection options (super admin only)
+  const [gcpConnections, setGcpConnections] = useState<GcpConnectionOption[]>([]);
 
   const fetchCustomers = useCallback(async () => {
     setIsLoading(true);
     setError(null);
-
     try {
       const response = await api.get<PaginatedResponse<Customer>>('/customers');
       setCustomers(response.data || []);
@@ -64,9 +78,21 @@ export default function CustomersPage() {
     }
   }, []);
 
+  // Load GCP connections for the dropdown (super admin only)
+  const fetchGcpConnections = useCallback(async () => {
+    if (!isSuperAdmin) return;
+    try {
+      const res = await api.get<{ data: GcpConnectionOption[] }>('/admin/gcp-connections');
+      setGcpConnections(res.data ?? []);
+    } catch {
+      // silently ignore — not critical
+    }
+  }, [isSuperAdmin]);
+
   useEffect(() => {
     fetchCustomers();
-  }, [fetchCustomers]);
+    fetchGcpConnections();
+  }, [fetchCustomers, fetchGcpConnections]);
 
   const columns: ColumnDef<Customer>[] = useMemo(
     () => [
@@ -74,10 +100,7 @@ export default function CustomersPage() {
         accessorKey: 'name',
         header: t('name'),
         cell: ({ row }) => (
-          <Link
-            href={`/admin/customers/${row.original.id}`}
-            className="block hover:opacity-80"
-          >
+          <Link href={`/admin/customers/${row.original.id}`} className="block hover:opacity-80">
             <div className="font-medium text-primary">{row.original.name}</div>
             <div className="text-xs text-muted-foreground">{row.original.externalId}</div>
           </Link>
@@ -98,11 +121,23 @@ export default function CustomersPage() {
         cell: ({ row }) => row.original.primaryContactEmail || '-',
       },
       {
+        id: 'gcpConnection',
+        header: t('gcpConnection'),
+        cell: ({ row }) => {
+          if (!row.original.gcpConnectionId) return <span className="text-muted-foreground text-xs">-</span>;
+          const conn = gcpConnections.find((c) => c.id === row.original.gcpConnectionId);
+          return (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Cloud className="h-3 w-3" />
+              {conn?.name ?? row.original.gcpConnectionId.slice(0, 8) + '...'}
+            </div>
+          );
+        },
+      },
+      {
         accessorKey: 'status',
         header: t('status'),
-        cell: ({ row }) => (
-          <StatusBadge status={row.original.status} />
-        ),
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
       },
       {
         id: 'actions',
@@ -124,7 +159,7 @@ export default function CustomersPage() {
         ),
       },
     ],
-    [t, tc]
+    [t, tc, gcpConnections]
   );
 
   const handleEdit = (customer: Customer) => {
@@ -136,6 +171,7 @@ export default function CustomersPage() {
       paymentTermsDays: customer.paymentTermsDays,
       primaryContactEmail: customer.primaryContactEmail || '',
       status: customer.status,
+      gcpConnectionId: customer.gcpConnectionId ?? null,
     });
     setShowCreateModal(true);
   };
@@ -149,6 +185,7 @@ export default function CustomersPage() {
       paymentTermsDays: 30,
       primaryContactEmail: '',
       status: 'ACTIVE',
+      gcpConnectionId: null,
     });
     setShowCreateModal(true);
   };
@@ -156,10 +193,14 @@ export default function CustomersPage() {
   const handleSubmit = async () => {
     setIsSaving(true);
     try {
+      const payload = {
+        ...formData,
+        gcpConnectionId: formData.gcpConnectionId || null,
+      };
       if (editingCustomer) {
-        await api.put(`/customers/${editingCustomer.id}`, formData);
+        await api.put(`/customers/${editingCustomer.id}`, payload);
       } else {
-        await api.post('/customers', formData);
+        await api.post('/customers', payload);
       }
       setShowCreateModal(false);
       fetchCustomers();
@@ -170,6 +211,16 @@ export default function CustomersPage() {
       setIsSaving(false);
     }
   };
+
+  // Group GCP connections by group for the select
+  const gcpConnectionGroups = useMemo(() => {
+    const groups: Record<string, GcpConnectionOption[]> = {};
+    for (const c of gcpConnections) {
+      if (!groups[c.group]) groups[c.group] = [];
+      groups[c.group].push(c);
+    }
+    return groups;
+  }, [gcpConnections]);
 
   return (
     <div className="space-y-6">
@@ -187,12 +238,7 @@ export default function CustomersPage() {
         </Can>
       </div>
 
-      {/* Error */}
-      {error && (
-        <Alert variant="error" onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
+      {error && <Alert variant="error" onClose={() => setError(null)}>{error}</Alert>}
 
       {/* Table */}
       <Card>
@@ -214,18 +260,11 @@ export default function CustomersPage() {
         title={editingCustomer ? t('modal.editTitle') : t('modal.createTitle')}
         size="md"
       >
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSubmit();
-          }}
-          className="space-y-4"
-        >
+        <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="name">{t('name')} *</Label>
             <Input
               id="name"
-              type="text"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               required
@@ -236,7 +275,6 @@ export default function CustomersPage() {
             <Label htmlFor="externalId">{t('externalId')}</Label>
             <Input
               id="externalId"
-              type="text"
               value={formData.externalId}
               onChange={(e) => setFormData({ ...formData, externalId: e.target.value })}
             />
@@ -245,18 +283,14 @@ export default function CustomersPage() {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="currency">{t('currency')}</Label>
-              <Select
-                value={formData.currency}
-                onValueChange={(value) => setFormData({ ...formData, currency: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+              <Select value={formData.currency} onValueChange={(v) => setFormData({ ...formData, currency: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="USD">USD</SelectItem>
                   <SelectItem value="EUR">EUR</SelectItem>
                   <SelectItem value="GBP">GBP</SelectItem>
                   <SelectItem value="JPY">JPY</SelectItem>
+                  <SelectItem value="CNY">CNY</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -267,9 +301,7 @@ export default function CustomersPage() {
                 id="paymentTerms"
                 type="number"
                 value={formData.paymentTermsDays}
-                onChange={(e) =>
-                  setFormData({ ...formData, paymentTermsDays: parseInt(e.target.value) || 30 })
-                }
+                onChange={(e) => setFormData({ ...formData, paymentTermsDays: parseInt(e.target.value) || 30 })}
                 min={1}
                 max={180}
               />
@@ -286,16 +318,44 @@ export default function CustomersPage() {
             />
           </div>
 
+          {/* GCP Connection — super admin only */}
+          {isSuperAdmin && (
+            <div className="space-y-2">
+              <Label htmlFor="gcpConnection" className="flex items-center gap-1">
+                <Cloud className="h-3.5 w-3.5" />
+                {t('gcpConnection')}
+              </Label>
+              <Select
+                value={formData.gcpConnectionId ?? 'none'}
+                onValueChange={(v) => setFormData({ ...formData, gcpConnectionId: v === 'none' ? null : v })}
+              >
+                <SelectTrigger id="gcpConnection">
+                  <SelectValue placeholder={t('gcpConnectionPlaceholder')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t('gcpConnectionNone')}</SelectItem>
+                  {Object.entries(gcpConnectionGroups).map(([group, conns]) => (
+                    conns.map((conn) => (
+                      <SelectItem key={conn.id} value={conn.id}>
+                        <span className="text-xs text-muted-foreground mr-1">[{group}]</span>
+                        {conn.name}
+                      </SelectItem>
+                    ))
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t('gcpConnectionHint')}</p>
+            </div>
+          )}
+
           {editingCustomer && (
             <div className="space-y-2">
               <Label htmlFor="status">{t('status')}</Label>
               <Select
                 value={formData.status}
-                onValueChange={(value: 'ACTIVE' | 'SUSPENDED' | 'TERMINATED') => setFormData({ ...formData, status: value })}
+                onValueChange={(v: 'ACTIVE' | 'SUSPENDED' | 'TERMINATED') => setFormData({ ...formData, status: v })}
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ACTIVE">{t('statuses.active')}</SelectItem>
                   <SelectItem value="SUSPENDED">{t('statuses.suspended')}</SelectItem>

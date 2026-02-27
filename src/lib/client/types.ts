@@ -25,6 +25,7 @@ export interface Customer {
   primaryContactName: string | null;
   primaryContactEmail: string | null;
   status: 'ACTIVE' | 'SUSPENDED' | 'TERMINATED';
+  gcpConnectionId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -63,7 +64,9 @@ export interface InvoiceRun {
 export interface Project {
   id: string;
   projectId: string;
+  projectNumber: string | null;
   name: string | null;
+  iamRole: string | null;
   status: 'ACTIVE' | 'SUSPENDED' | 'NOT_FOUND' | 'NO_BILLING';
   billingAccount: {
     billingAccountId: string;

@@ -116,7 +116,9 @@ export const GET = withPermission(
       const data = projects.map((p) => ({
         id: p.id,
         projectId: p.projectId,
+        projectNumber: p.projectNumber,
         name: p.name,
+        iamRole: p.iamRole,
         status: p.status,
         billingAccount: p.billingAccount
           ? {
@@ -193,7 +195,9 @@ export const POST = withPermission(
       const project = await prisma.project.create({
         data: {
           projectId: data.projectId,
+          projectNumber: data.projectNumber ?? null,
           name: data.name,
+          iamRole: data.iamRole ?? null,
           billingAccountId: billingAccountDbId,
         },
         include: {
@@ -217,7 +221,9 @@ export const POST = withPermission(
       return created({
         id: project.id,
         projectId: project.projectId,
+        projectNumber: project.projectNumber,
         name: project.name,
+        iamRole: project.iamRole,
         status: project.status,
         billingAccount: project.billingAccount
           ? {

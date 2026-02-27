@@ -34,6 +34,7 @@ model User {
   rawCostIngestionBatches RawCostIngestionBatch[]  @relation("IngestionCreator")
   billingIngestionBatches BillingIngestionBatch[]  @relation("BillingIngestionCreator") // Phase 5
   payments                Payment[]                @relation("PaymentRecorder") // Phase X
+  gcpConnections          GcpConnection[]          @relation("GcpConnectionCreator")
 
   @@index([email])
   @@index([isActive])
@@ -167,6 +168,10 @@ model Customer {
   primaryContactName   String?        @map("primary_contact_name") @db.VarChar(255)
   primaryContactEmail  String?        @map("primary_contact_email") @db.VarChar(255)
 
+  // GCP Connection — which credentials to use when calling GCP APIs for this customer
+  gcpConnectionId      String?        @map("gcp_connection_id") @db.Uuid
+  gcpConnection        GcpConnection? @relation("CustomerGcpConnection", fields: [gcpConnectionId], references: [id], onDelete: SetNull)
+
   // Audit fields
   createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt            DateTime       @updatedAt @map("updated_at") @db.Timestamptz
@@ -233,7 +238,9 @@ enum ProjectStatus {
 model Project {
   id               String        @id @default(uuid()) @db.Uuid
   projectId        String        @unique @map("project_id") @db.VarChar(100) // GCP Project ID
+  projectNumber    String?       @map("project_number") @db.VarChar(50)      // GCP numeric project number
   name             String?       @db.VarChar(255)
+  iamRole          String?       @map("iam_role") @db.VarChar(500)           // IAM role associated with the project
   status           ProjectStatus @default(ACTIVE)
   billingAccountId String?       @map("billing_account_id") @db.Uuid
   createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz
@@ -730,18 +737,24 @@ model InvoiceLineItem {
 
 /// SKU master - Google Cloud SKU definitions
 model Sku {
-  id                String   @id @default(uuid()) @db.Uuid
-  skuId             String   @unique @map("sku_id") @db.VarChar(100) // Google SKU ID
-  skuDescription    String   @map("sku_description") @db.VarChar(500)
-  serviceId         String   @map("service_id") @db.VarChar(100)
-  serviceDescription String  @map("service_description") @db.VarChar(255)
-  unit              String?  @db.VarChar(50) // Usage unit (e.g., "hour", "byte-seconds")
-  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  id                 String   @id @default(uuid()) @db.Uuid
+  skuId              String   @unique @map("sku_id") @db.VarChar(100) // Google SKU ID
+  skuDescription     String   @map("sku_description") @db.VarChar(500)
+  serviceId          String   @map("service_id") @db.VarChar(100)
+  serviceDescription String   @map("service_description") @db.VarChar(255)
+  unit               String?  @db.VarChar(50) // Usage unit (e.g., "hour", "byte-seconds")
+  // GCP product taxonomy (mirrors category field in Cloud Billing API)
+  resourceFamily     String?  @map("resource_family") @db.VarChar(100) // e.g., "Compute", "Storage", "Network"
+  resourceGroup      String?  @map("resource_group") @db.VarChar(100)  // e.g., "CPU", "RAM", "GPU", "SSD"
+  usageType          String?  @map("usage_type") @db.VarChar(100)      // e.g., "OnDemand", "Preemptible"
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   // Relations
   skuGroupMappings  SkuGroupMapping[]
 
   @@index([serviceId])
+  @@index([resourceFamily])
+  @@index([usageType])
   @@map("skus")
 }
 
@@ -810,17 +823,25 @@ model PricingList {
 
 /// Pricing rule type enumeration
 enum PricingRuleType {
-  LIST_DISCOUNT  // Apply discount rate to list price (e.g., 0.90 = 90% of list = 10% discount)
+  LIST_DISCOUNT  // discountRate field: 0.90 = 90% of list price = 10% discount
+  UNIT_PRICE     // unitPrice field: fixed price per unit regardless of list price
+  TIERED         // tiers JSON field: array of {from, to, rate|unitPrice} thresholds
 
   @@map("pricing_rule_type")
 }
 
 /// Pricing rule - defines how to price a SKU group
+/// Rule type determines which field is used:
+///   LIST_DISCOUNT → discountRate (e.g. 0.9 = pay 90% of list = 10% off)
+///   UNIT_PRICE    → unitPrice (fixed price per unit)
+///   TIERED        → tiers JSON ([{from, to, rate?, unitPrice?}, ...])
 model PricingRule {
   id             String          @id @default(uuid()) @db.Uuid
   pricingListId  String          @map("pricing_list_id") @db.Uuid
   ruleType       PricingRuleType @default(LIST_DISCOUNT) @map("rule_type")
-  discountRate   Decimal         @map("discount_rate") @db.Decimal(5, 4) // e.g., 0.9000 = 90% of list
+  discountRate   Decimal?        @map("discount_rate") @db.Decimal(5, 4) // LIST_DISCOUNT: 0.9 = 90% of list
+  unitPrice      Decimal?        @map("unit_price") @db.Decimal(18, 8)   // UNIT_PRICE: fixed price per unit
+  tiers          Json?           @db.JsonB                                // TIERED: [{from, to, rate|unitPrice}]
   skuGroupId     String?         @map("sku_group_id") @db.Uuid // null = applies to all SKUs
   effectiveStart DateTime?       @map("effective_start") @db.Date
   effectiveEnd   DateTime?       @map("effective_end") @db.Date
@@ -1129,5 +1150,42 @@ model Payment {
   @@index([paymentDate])
   @@index([recordedBy])
   @@map("payments")
+}
+
+// =============================================================================
+// GCP CONNECTIONS
+// =============================================================================
+
+enum GcpAuthType {
+  SERVICE_ACCOUNT // Full service account JSON credentials
+  API_KEY         // Simple API key (for public endpoints)
+  @@map("gcp_auth_type")
+}
+
+/// Stored GCP API credentials managed by super admins.
+/// Supports multiple connections grouped by environment/purpose.
+model GcpConnection {
+  id          String      @id @default(uuid()) @db.Uuid
+  name        String      @db.VarChar(255)                  // e.g. "生产主账号"
+  description String?     @db.Text
+  group       String      @default("default") @db.VarChar(100) // e.g. "生产环境", "测试环境"
+  authType    GcpAuthType @map("auth_type")
+  /// Credential payload (type-specific JSON):
+  ///   SERVICE_ACCOUNT: { client_email, private_key }
+  ///   API_KEY:         { key }
+  credentials Json        @db.JsonB
+  isDefault   Boolean     @default(false) @map("is_default") // Used as fallback by GCP auth module
+  isActive    Boolean     @default(true)  @map("is_active")
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime    @updatedAt      @map("updated_at") @db.Timestamptz
+  createdById String?     @map("created_by_id") @db.Uuid
+
+  createdBy   User?       @relation("GcpConnectionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  customers   Customer[]  @relation("CustomerGcpConnection")
+
+  @@index([group])
+  @@index([isDefault])
+  @@index([isActive])
+  @@map("gcp_connections")
 }
 

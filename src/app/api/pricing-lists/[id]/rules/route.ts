@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { Prisma } from '@prisma/client';
 import { withPermissionAndScope } from '@/lib/middleware';
 import { logCreate } from '@/lib/audit';
 import {
@@ -102,8 +103,10 @@ export const GET = withPermissionAndScope(
       const data = rules.map((rule) => ({
         id: rule.id,
         ruleType: rule.ruleType,
-        discountRate: rule.discountRate.toString(),
-        discountPercent: `${(1 - Number(rule.discountRate)) * 100}%`, // 0.90 -> "10%"
+        discountRate: rule.discountRate ? rule.discountRate.toString() : null,
+        discountPercent: rule.discountRate ? `${(1 - Number(rule.discountRate)) * 100}%` : null,
+        unitPrice: rule.unitPrice ? rule.unitPrice.toString() : null,
+        tiers: rule.tiers ?? null,
         skuGroup: rule.skuGroup,
         effectiveStart: rule.effectiveStart,
         effectiveEnd: rule.effectiveEnd,
@@ -184,6 +187,8 @@ export const POST = withPermissionAndScope(
       const {
         ruleType,
         discountRate,
+        unitPrice,
+        tiers,
         skuGroupId,
         effectiveStart,
         effectiveEnd,
@@ -217,7 +222,9 @@ export const POST = withPermissionAndScope(
         data: {
           pricingListId,
           ruleType,
-          discountRate,
+          discountRate: discountRate ?? null,
+          unitPrice: unitPrice ?? null,
+          tiers: tiers ? (tiers as Prisma.InputJsonValue) : Prisma.DbNull,
           skuGroupId: skuGroupId ?? null,
           effectiveStart: effectiveStart ? new Date(effectiveStart) : null,
           effectiveEnd: effectiveEnd ? new Date(effectiveEnd) : null,
@@ -251,8 +258,10 @@ export const POST = withPermissionAndScope(
         rule: {
           id: rule.id,
           ruleType: rule.ruleType,
-          discountRate: rule.discountRate.toString(),
-          discountPercent: `${(1 - Number(rule.discountRate)) * 100}%`,
+          discountRate: rule.discountRate ? rule.discountRate.toString() : null,
+          discountPercent: rule.discountRate ? `${(1 - Number(rule.discountRate)) * 100}%` : null,
+          unitPrice: rule.unitPrice ? rule.unitPrice.toString() : null,
+          tiers: rule.tiers ?? null,
           skuGroup: rule.skuGroup,
           effectiveStart: rule.effectiveStart,
           effectiveEnd: rule.effectiveEnd,

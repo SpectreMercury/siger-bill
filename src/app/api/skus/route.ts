@@ -49,12 +49,27 @@ export const GET = withPermission(
       // Optional filters
       const search = searchParams.get('search');
       const serviceId = searchParams.get('serviceId');
+      const resourceFamily = searchParams.get('resourceFamily');
+      const resourceGroup = searchParams.get('resourceGroup');
+      const usageType = searchParams.get('usageType');
 
       // Build where clause
       const where: Record<string, unknown> = {};
 
       if (serviceId) {
         where.serviceId = serviceId;
+      }
+
+      if (resourceFamily) {
+        where.resourceFamily = resourceFamily;
+      }
+
+      if (resourceGroup) {
+        where.resourceGroup = resourceGroup;
+      }
+
+      if (usageType) {
+        where.usageType = usageType;
       }
 
       if (search) {
@@ -97,6 +112,9 @@ export const GET = withPermission(
         serviceId: sku.serviceId,
         serviceDescription: sku.serviceDescription,
         unit: sku.unit,
+        resourceFamily: sku.resourceFamily,
+        resourceGroup: sku.resourceGroup,
+        usageType: sku.usageType,
         skuGroups: sku.skuGroupMappings.map((m) => m.skuGroup),
         createdAt: sku.createdAt,
       }));
@@ -142,6 +160,9 @@ export const POST = withPermission(
         serviceId: string;
         serviceDescription: string;
         unit?: string;
+        resourceFamily?: string | null;
+        resourceGroup?: string | null;
+        usageType?: string | null;
       }>;
 
       // Determine if bulk or single
@@ -187,6 +208,9 @@ export const POST = withPermission(
               serviceId: sku.serviceId,
               serviceDescription: sku.serviceDescription,
               unit: sku.unit ?? null,
+              resourceFamily: sku.resourceFamily ?? null,
+              resourceGroup: sku.resourceGroup ?? null,
+              usageType: sku.usageType ?? null,
             },
           });
           results.push(created);
