@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/shadcn/select';
 import { Modal } from '@/components/ui/Modal';
+import { Textarea } from '@/components/ui/shadcn/textarea';
 import { Can } from '@/components/auth';
 import { Plus, ExternalLink, Cloud } from 'lucide-react';
 import Link from 'next/link';
@@ -38,6 +39,7 @@ interface CustomerFormData {
   primaryContactEmail: string;
   status: 'ACTIVE' | 'SUSPENDED' | 'TERMINATED';
   gcpConnectionId: string | null;
+  projectIds: string;
 }
 
 export default function CustomersPage() {
@@ -58,6 +60,7 @@ export default function CustomersPage() {
     primaryContactEmail: '',
     status: 'ACTIVE',
     gcpConnectionId: null,
+    projectIds: '',
   });
   const [isSaving, setIsSaving] = useState(false);
 
@@ -172,6 +175,7 @@ export default function CustomersPage() {
       primaryContactEmail: customer.primaryContactEmail || '',
       status: customer.status,
       gcpConnectionId: customer.gcpConnectionId ?? null,
+      projectIds: '',
     });
     setShowCreateModal(true);
   };
@@ -186,6 +190,7 @@ export default function CustomersPage() {
       primaryContactEmail: '',
       status: 'ACTIVE',
       gcpConnectionId: null,
+      projectIds: '',
     });
     setShowCreateModal(true);
   };
@@ -193,9 +198,14 @@ export default function CustomersPage() {
   const handleSubmit = async () => {
     setIsSaving(true);
     try {
+      const projectIdsArray = formData.projectIds
+        ? formData.projectIds.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
+        : [];
+
       const payload = {
         ...formData,
         gcpConnectionId: formData.gcpConnectionId || null,
+        projectIds: projectIdsArray.length > 0 ? projectIdsArray : undefined,
       };
       if (editingCustomer) {
         await api.put(`/customers/${editingCustomer.id}`, payload);
@@ -269,6 +279,20 @@ export default function CustomersPage() {
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               required
             />
+          </div>
+
+          {/* GCP Project IDs — the most important field for resellers */}
+          <div className="space-y-2">
+            <Label htmlFor="projectIds">{t('projectIds')}</Label>
+            <Textarea
+              id="projectIds"
+              value={formData.projectIds}
+              onChange={(e) => setFormData({ ...formData, projectIds: e.target.value })}
+              placeholder={t('projectIdsPlaceholder')}
+              rows={2}
+              className="font-mono text-sm"
+            />
+            <p className="text-xs text-muted-foreground">{t('projectIdsHint')}</p>
           </div>
 
           <div className="space-y-2">

@@ -238,6 +238,9 @@
       "createTitle": "New Customer",
       "editTitle": "Edit Customer"
     },
+    "projectIds": "GCP Project IDs",
+    "projectIdsPlaceholder": "Enter GCP project IDs, separated by comma or newline\ne.g. my-project-1, my-project-2",
+    "projectIdsHint": "Enter the customer's GCP project IDs. Projects will be auto-created and bound to this customer.",
     "searchPlaceholder": "Search customers...",
     "noCustomers": "No customers found",
     "notFound": "Customer not found",
@@ -727,8 +730,17 @@
   },
   "help": {
     "title": "System User Guide",
-    "subtitle": "Understand what each module does and why the configuration order matters",
+    "subtitle": "Sieger Management Console — module reference and workflows",
     "goTo": "Go to",
+    "planned": "Planned",
+    "sections": {
+      "main": "1. Main Functions",
+      "finance": "2. Financial Management",
+      "customerMgmt": "3. Customer Management",
+      "operations": "4. Operations",
+      "gcp": "GCP",
+      "aws": "AWS"
+    },
     "flowDiagram": {
       "title": "System Configuration Flow",
       "subtitle": "Modules have data dependencies — you must follow this order for invoice generation to work correctly. Click any node to navigate to that module.",
@@ -744,7 +756,7 @@
         "invoices": "Invoices",
         "reconciliation": "Reconciliation",
         "payments": "Payments",
-        "gcpConnections": "GCP Connections"
+        "gcpConnections": "GCP Source Data"
       },
       "phases": {
         "foundation": "1. Foundation",
@@ -768,129 +780,258 @@
       },
       "description": {
         "title": "Why this configuration order?",
-        "step1": "Configure GCP Connections first: the system needs credentials to call GCP APIs and auto-populate billing accounts and project names — preventing manual entry errors",
+        "step1": "Configure data source connections first: the system needs credentials to call GCP/AWS APIs and auto-populate billing accounts and project names — preventing manual entry errors",
         "step2": "Create Customers next: every billing account, project, pricing rule, and invoice must belong to a customer — customers are the top-level container",
-        "step3": "Set up Billing Accounts and link to customers: GCP costs are summarized by billing account ID — this linkage tells the system which customer owns each account's costs",
-        "step4": "Create Projects under billing accounts: cost data is tagged by project ID — the chain Project → Billing Account → Customer enables full cost attribution",
-        "step5": "Configure Product Groups and Pricing Lists: groups turn hundreds of SKU lines into readable categories; pricing lists define the reseller price charged to customers (not the GCP list price)",
-        "step6": "Import cost data: with projects and product groups in place, every cost record can be matched to its customer and category",
+        "step3": "Set up Billing Accounts (GCP) or Payer Accounts (AWS) and link to customers: costs are summarized by account ID — this linkage tells the system which customer owns each account's costs",
+        "step4": "Create Projects (GCP) or Linked Accounts (AWS) under billing/payer accounts: cost data is tagged by project/account ID — forming the complete attribution chain",
+        "step5": "Configure Product Groups and Pricing Lists: groups turn hundreds of SKU lines into readable categories; pricing lists define the reseller price charged to customers",
+        "step6": "Import cost data: with projects/accounts and product groups in place, every cost record can be matched to its customer and category",
         "step7": "Run Invoice Batches: the system automatically applies pricing rules and credits per customer, generating draft invoices for the entire billing month in one go",
-        "step8": "Review, lock, and record payments: locking prevents accidental changes and satisfies audit requirements; recording payments closes the accounts receivable cycle"
+        "step8": "Review, lock, send via EDM, and record payments: locking prevents accidental changes; EDM sends invoices in one click; recording payments closes the AR cycle"
       }
     },
     "quickStart": {
       "title": "Quick Start",
       "description": "Follow this order — each step has dependencies on the previous ones:",
-      "step1": "(Super admin) Go to GCP Connections and add a service account — the system needs this to call GCP APIs and auto-fill project names and billing account lists",
-      "step2": "Go to Customers, create a customer, and bind the GCP connection you just configured — the customer is the top-level container, and binding ensures API calls use that customer's own credentials",
-      "step3": "Go to Billing Accounts, add GCP billing account IDs and link them to the customer — this is how costs get attributed to the right customer",
-      "step4": "Go to Projects, enter GCP project IDs — the system auto-fetches names and project numbers from GCP. Link projects to billing accounts and customers",
-      "step5": "Go to Product Groups to create categories (e.g. Compute, Storage), then go to Pricing Lists to configure discount rules — these determine invoice line items and final amounts",
-      "step6": "Go to Cost Imports to import raw GCP billing data — the system matches each cost record to a customer (via project) and a category (via SKU)",
-      "step7": "Go to Invoice Runs, select the billing month, and execute — the system generates draft invoices for all customers; review, lock, and send when ready"
+      "step1": "(Super admin) Go to Operations > GCP Source Data to add service account credentials and BigQuery config (for AWS, configure AWS credentials and CUR path)",
+      "step2": "Go to Customer Management > Customers to create a customer — fill in company name, internal ID, contact email, and finance email",
+      "step3": "In the customer detail page, create an Opportunity — link a Vendor (GCP/AWS), pricing list, and account list",
+      "step4": "Add billing/payer accounts: GCP Billing Account IDs or AWS Payer Account IDs — link them to the corresponding customer",
+      "step5": "Set up projects/linked accounts: GCP Projects or AWS Linked Accounts linked to billing/payer accounts and customers",
+      "step6": "Configure product groups and pricing lists — groups define invoice categories, pricing lists define discount rules; together they determine invoice content and amounts",
+      "step7": "Import cost data — ensure projects/accounts and product groups are configured before importing raw billing data",
+      "step8": "Generate and manage invoices: run invoice batch → review drafts → lock invoices → send via EDM → record payments"
     },
-    "modulesTitle": "Module Reference",
     "modules": {
-      "gcpConnections": {
-        "title": "GCP Connections (Super Admin Only)",
-        "description": "Stores GCP service account credentials or API keys. The system uses these to call GCP APIs. Binding a connection to a customer ensures API calls for that customer use their own credentials — enforcing data isolation at the API layer.",
-        "step1": "Add one connection per GCP account — paste the service account JSON and credentials are extracted automatically",
-        "step2": "In Customer Management, bind this connection to the corresponding customer — when that customer's users call GCP APIs (billing account lookup, project name sync), only their own GCP account data is returned",
-        "step3": "Click \"Test\" to verify the connection — the test calls the GCP Billing API and shows which billing accounts are accessible"
+      "dashboard": {
+        "title": "Dashboard",
+        "description": "The default landing page showing key business metrics and summaries. Content adapts automatically based on user role and data permissions — different roles see different scopes of data.",
+        "step1": "After login, you land on the Dashboard showing a business overview matching your role and customer scope",
+        "step2": "Super Admins see global data summaries; other roles only see data within their authorized customer scope",
+        "step3": "Use the top filters to switch between different months or dimensions"
       },
-      "customers": {
-        "title": "Customers",
-        "description": "Customers are the top-level entity. Invoices, billing accounts, projects, and pricing rules all belong to a customer. Without a customer, there is no container to attach data to.",
-        "step1": "Create the customer with billing settings (currency, payment terms) — these directly affect invoice calculations",
-        "step2": "Bind a GCP Connection: ensures this customer's GCP API calls (billing account queries, project name sync) use their own credentials rather than the system-wide default",
-        "step3": "Assign a pricing list and credits — the pricing list determines discounted prices, credits are automatically deducted during invoice generation"
-      },
-      "billingAccounts": {
-        "title": "Billing Accounts",
-        "description": "GCP charges are summarized at the billing account level. Recording which billing accounts belong to which customer is the foundation of correct cost attribution.",
-        "step1": "Add the billing account ID from GCP Console (format: XXXXXX-XXXXXX-XXXXXX) — or use the \"Import from GCP\" tab to auto-list accessible accounts",
-        "step2": "Link the billing account to a customer — when cost data is imported, the system uses this link to attribute charges to the correct customer"
-      },
-      "projects": {
-        "title": "Projects",
-        "description": "GCP cost data is tagged by project ID. Projects must be linked to a billing account and a customer to form the complete cost attribution chain.",
-        "step1": "Enter the GCP project ID — the system automatically calls the Resource Manager API to fetch the project name and number, avoiding manual entry errors",
-        "step2": "Link the project to a billing account: clarifies which billing account bears this project's costs",
-        "step3": "Assign to a customer: completes the chain Project → Billing Account → Customer — invoice runs use this chain to aggregate each customer's monthly costs"
-      },
-      "productGroups": {
-        "title": "Product Groups",
-        "description": "GCP bills contain hundreds of SKUs. Displaying them all on an invoice is unreadable. Product groups map SKUs into human-readable categories like \"Compute\" or \"Storage\".",
-        "step1": "Create groups first (e.g. Compute, Storage, Network, Database), then add the corresponding SKUs to each group",
-        "step2": "Product groups must be configured before importing cost data — the import process needs to know which group each SKU belongs to for correct categorization",
-        "step3": "Use \"Browse by Category\" (Service → Resource Family → Resource Group → Usage Type) or keyword search to find and add SKUs"
-      },
-      "pricingLists": {
-        "title": "Pricing Lists",
-        "description": "As a GCP reseller, you charge customers differently from GCP list prices. Pricing lists define discounts or fixed prices per product group, and must be assigned to customers to take effect.",
-        "step1": "Create a pricing list with a descriptive name (e.g. \"Standard 2025\") — including the year makes it easy to create new versions annually",
-        "step2": "Add rules per product group — three types: percentage discount (e.g. 10% off), fixed unit price, or tiered pricing based on spend thresholds",
-        "step3": "Assign the pricing list to a customer — invoice runs look up the customer's active pricing list to calculate the final invoice amount"
-      },
-      "credits": {
-        "title": "Credits",
-        "description": "Customers may have pre-paid deposits, promotional credits, or contractual balances. Credits are automatically deducted from invoice totals during invoice runs — no manual calculation needed.",
-        "step1": "Add a credit with type (promotional / contract / flex), amount, validity period, and optionally the billing account it applies to",
-        "step2": "Credits are automatically matched and applied during invoice batch execution — when one credit is exhausted, the next valid one is applied"
-      },
-      "costImports": {
-        "title": "Cost Imports",
-        "description": "Invoice generation requires raw cost data. Each record contains project ID, SKU, usage quantity, and cost — imported from GCP billing exports.",
-        "step1": "Projects and product groups must be configured first — cost records are matched to customers via project ID, and to categories via SKU",
-        "step2": "After import, the system aggregates monthly costs per customer and per product group, which becomes the calculation basis for the next invoice run"
-      },
-      "invoiceRuns": {
-        "title": "Invoice Runs",
-        "description": "An invoice run processes all customers for a given billing month in one operation — applying pricing rules, deducting credits, and generating draft invoices automatically.",
-        "step1": "Select the billing month — the system checks whether cost data exists for that month and whether customers have pricing lists configured",
-        "step2": "After execution, review each customer's draft invoice to verify amounts, line items, and applied discounts",
-        "step3": "Lock invoices when correct — locked invoices cannot be modified, satisfying audit requirements. If errors are found, re-run the batch to generate a corrected version"
-      },
-      "payments": {
-        "title": "Payments",
-        "description": "Records actual payments received from customers, updates invoice status, and closes the accounts receivable cycle.",
-        "step1": "Select the invoice being paid, enter the amount, date, and reference number (e.g. bank transfer ID)",
-        "step2": "After recording, the invoice status updates to \"Paid\" — making it easy to reconcile and include in financial reports"
-      },
-      "reconciliation": {
-        "title": "Reconciliation",
-        "description": "Compares system-calculated invoice amounts against GCP's raw billing data to catch discrepancies before invoices are sent to customers.",
-        "step1": "Reconciliation depends on accurate cost import data — ensure the complete GCP billing export for the month has been imported",
-        "step2": "Discrepancies usually indicate incorrect pricing rules or incomplete cost data — reconciliation results guide you to the root cause"
+      "reports": {
+        "title": "Reports",
+        "description": "(Planned) Customizable report center with multi-dimensional analytics. Report types include: AWS/GCP customer usage, untagged LinkedID/ProjectID usage, AWS SP coverage & utilization, GCP CUD coverage & utilization, and contract completion statistics.",
+        "step1": "Select a report type: AWS customer usage, GCP customer usage, SP/CUD coverage analysis, contract completion, etc.",
+        "step2": "Reports automatically filter data by role, ensuring each user only sees authorized data",
+        "step3": "Export reports as Excel/PDF for distribution and archival"
       },
       "users": {
-        "title": "User Management",
+        "title": "User Management (Super Admin)",
         "description": "Controls who can log in and what data they can see. Data isolation is enforced through \"Customer Scopes\" — this is the core multi-tenancy mechanism.",
-        "step1": "Create users and assign roles (super_admin / admin / finance / viewer) — the role determines which operations they can perform",
-        "step2": "Assign a \"Customer Scope\" to non-admin users — a user scoped to Customer A can only see Customer A's invoices, projects, and billing data; the backend filter is applied automatically",
-        "step3": "Deactivate or adjust scopes promptly when someone leaves or changes roles — preventing data leakage"
+        "step1": "Click \"Create\" — fill in basic info: first name, last name, email, and login password",
+        "step2": "Select a role — the right panel dynamically shows a detailed description and permission list for the selected role, helping you understand the differences",
+        "step3": "For non-super_admin roles, set the \"Customer Access\" scope — select which customer this user can access; once set, the backend automatically filters so the user only sees that customer's invoices, projects, and billing data",
+        "step4": "After creation, click \"Manage\" to go to the user detail page where you can adjust roles, scopes, or deactivate the account",
+        "step5": "When someone leaves or their role changes, promptly deactivate or adjust their customer scope — the list shows each user's last login time and status (active with green icon / inactive with red icon)"
       },
       "auditLogs": {
         "title": "Audit Logs",
-        "description": "Every data change is recorded: who did what, and when. Used for compliance audits, incident investigation, and evidence in billing disputes with customers.",
-        "step1": "Filter by date range, user, or action type — e.g. \"who locked this invoice and when\"",
-        "step2": "Regularly review high-privilege operations (delete, lock, scope changes) to ensure no unauthorized changes have been made"
+        "description": "Every data change is recorded: who did what, and when, including complete before/after data snapshots. Used for compliance audits, incident investigation, and evidence in billing disputes.",
+        "step1": "Use filters to narrow your search by action type (CREATE/UPDATE/DELETE/LOCK/BIND etc.), resource type (customers/invoices/projects etc.), and date range",
+        "step2": "Click the \"Details\" button on any log entry to see the full record — including timestamp, operator, IP address, and a JSON diff showing before and after data",
+        "step3": "Regularly review high-privilege operations (DELETE shown in red, LOCK in gray) to ensure no unauthorized changes — CREATE is shown in green for easy visual distinction"
+      },
+      "invoiceManagement": {
+        "title": "Invoice Management",
+        "description": "Unified invoice management for all customers. Displays unlocked invoices by Invoice Month, organized by customer, with both Invoice and detailed statements. Supports regional invoice templates (Mainland China / HK / Singapore / Japan) and EDM email integration for one-click billing.",
+        "step1": "View all unlocked invoices by Invoice Month — displayed by customer, each containing an Invoice section and a detailed statement section",
+        "step2": "Mainland China customers: upload the issued invoice file directly",
+        "step3": "HK / Singapore / Japan customers: select the contracting entity → select customer name (auto-fills entity, address, email) → enter Service Description, Amount, Balance of Prepayment, Subtotal, Tax → system auto-generates the Invoice",
+        "step4": "Manage detailed statements: GCP statements default to Excel, AWS statements default to PDF; Phase 1 supports direct upload, Phase 2 will auto-generate from monthly billing calculations; custom statements can also be uploaded",
+        "step5": "Use EDM for one-click sending: customize email templates, select customer, and send invoices with detailed statements to the customer's finance email"
+      },
+      "balanceManagement": {
+        "title": "Balance & Top-up Management",
+        "description": "(Planned) Manages pre-paid customer account balances and post-paid customer payment terms. Automatically alerts for overdue post-paid customers and underfunded pre-paid customers to prevent bad debt.",
+        "step1": "View the alert panel: overdue post-paid customers and underfunded pre-paid customers are auto-highlighted",
+        "step2": "Pre-paid balance management: select customer → perform manual top-up or balance adjustment → changes are automatically linked to the customer account with audit trail",
+        "step3": "Post-paid payment progress: select the corresponding invoice → update payment progress status → system auto-calculates whether terms are exceeded",
+        "step4": "All balance changes and top-ups are automatically logged in audit logs for financial traceability"
+      },
+      "paymentProgress": {
+        "title": "Payment Progress",
+        "description": "Records actual customer payments, tracks payment progress per invoice, and closes the accounts receivable cycle. Supports partial payments and multiple payment methods.",
+        "step1": "Click \"Record Payment\" — select the unpaid invoice from the dropdown showing invoice number, customer name, and outstanding balance",
+        "step2": "The system displays invoice details (total, paid, remaining) and pre-fills the payment amount with the remaining balance — modify for partial payments",
+        "step3": "Enter payment date (defaults to today), select payment method (Bank Transfer / Credit Card / Check / Wire / ACH / Other), enter reference number and notes",
+        "step4": "After submission, invoice status updates automatically; summary cards show real-time total payment count and amount"
+      },
+      "reconciliation": {
+        "title": "Reconciliation",
+        "description": "Compares system-calculated invoice amounts against cloud provider raw billing data at the customer level, showing discrepancies to help catch and fix issues before invoices are sent.",
+        "step1": "Select the month to reconcile and click \"Generate Report\" — the system compares raw cost totals against invoice totals for that month",
+        "step2": "Review the 4 summary cards: raw cost total (with record count), invoice total (with invoice count), variance amount (with percentage — green = over, red = under), and status (\"Reconciled\" in green if variance ≤ 1%, otherwise \"Needs Review\" in orange)",
+        "step3": "Check the per-customer breakdown table — each row shows customer name, raw cost, invoiced amount, and variance; green checkmark = matched, orange/red arrows = overcharged or undercharged",
+        "step4": "If there are unassigned projects, an orange warning appears — listing projects not linked to any customer along with their cost totals. Go to Project Management to complete the linking, then re-reconcile"
+      },
+      "customers": {
+        "title": "Customer Management",
+        "description": "Customers are the top-level entity. Each customer contains Basic Information and detail tabs (Opportunities, Contracts, Credits, Invoices). All business data is organized around customers.",
+        "step1": "Click \"Create\" to fill in basic info: company name (required), internal ID (e.g. 202602241), contact email, finance email",
+        "step2": "After creation, enter the customer detail page to manage associated data through 4 tabs",
+        "step3": "Opportunities tab: create business opportunities — fill in Opp name (e.g. GCP-CDN), Opp ID (e.g. GCP-CUST-001), select Vendor (GCP/AWS), link pricing list and account list; status can be changed in edit mode (Active/Suspended/Terminated)",
+        "step4": "Contracts tab: manage this customer's contracts; Credits tab: view and manage this customer's credit balances",
+        "step5": "Invoices tab: view all invoices and payment status for this customer — edit mode allows changing customer status (Active/Suspended/Terminated)"
+      },
+      "contracts": {
+        "title": "Contract Management",
+        "description": "(Planned) Contract import and management. Supports uploading contract files, recording terms, validity periods, committed spend, and linking to customers and opportunities.",
+        "step1": "Upload contract files and fill in basic info: contract number, start/end dates, committed spend, associated vendor",
+        "step2": "Link the contract to the corresponding customer and Opportunity — the system automatically establishes the association",
+        "step3": "Contract completion data feeds into the \"Contract Completion Statistics\" report, helping track contract fulfillment"
+      },
+      "pricingLists": {
+        "title": "Pricing Lists",
+        "description": "Defines the reseller prices charged to customers. Set discount rates, fixed unit prices, or tiered pricing per product group, and assign to customer Opportunities to take effect during invoice generation.",
+        "step1": "Click \"Create\" — select the customer and enter a name (e.g. \"Standard 2025\"). The customer cannot be changed after creation",
+        "step2": "After creation, click \"Manage Rules\" to enter the detail page — add pricing rules per product group here",
+        "step3": "When adding a rule, choose the type: \"Percentage Discount\" (e.g. 10% off = rate 0.90), \"Fixed Unit Price\", or \"Tiered Pricing\" (different rates based on spend thresholds)",
+        "step4": "For tiered pricing: click \"Add Tier\" to set usage ranges (from/to) with corresponding rates or unit prices — leave the last tier's \"to\" empty for unlimited",
+        "step5": "Link the pricing list in the customer's Opportunity — invoice runs look up the Opportunity's pricing list to calculate final amounts per vendor dimension"
+      },
+      "credits": {
+        "title": "Credits",
+        "description": "Customers may have pre-paid deposits, promotional credits, or contractual balances. Credits are automatically deducted from invoice totals during invoice runs — no manual calculation needed. The system tracks remaining balance per credit.",
+        "step1": "Click \"Add Credit\" — select a customer and choose the type: Promotional, Commitment, Goodwill, or Refund",
+        "step2": "Enter the amount (to the cent), validity dates (defaults to today through one year), and a description — amount and dates are required",
+        "step3": "Credits take effect automatically during invoice runs: the system matches currently valid credits by date range, deducts from the invoice total, and switches to the next valid credit when one is exhausted",
+        "step4": "Check the \"Remaining\" column in the list — green indicates available balance, gray means fully used; expired or zero-balance credits are automatically marked Inactive"
+      },
+      "specialRules": {
+        "title": "Special Rules",
+        "description": "Configure price adjustment rules for specific customers or scenarios that standard pricing lists can't cover, such as one-time discounts for specific SKUs or promotional offers.",
+        "step1": "Create a special rule specifying the applicable customer, SKU, or product group scope — supports overrides down to individual SKU level",
+        "step2": "Set the rule type and priority — special rules take precedence over general rules in pricing lists, ensuring special cases are handled correctly",
+        "step3": "Set a validity period — expired special rules are automatically deactivated and won't affect subsequent invoice calculations"
+      },
+      "rawCostImports": {
+        "title": "Raw Cost Imports",
+        "description": "Invoice generation requires raw cost data. Data is read from GCP BigQuery / AWS CUR and other sources, with each record containing project ID, SKU, usage, and cost. This page is a read-only view showing all import batch statuses and summaries.",
+        "step1": "Prerequisites: ensure projects/linked accounts and product groups are configured — cost records are matched to customers via project/account ID and to categories via SKU",
+        "step2": "Ensure the data source connection has BigQuery/CUR paths and credentials correctly configured — these are the sources from which the system reads raw billing data",
+        "step3": "The summary cards at the top show total batches, total rows, and total cost — giving a quick overview of the overall import status",
+        "step4": "Use the month and source filters to view specific import records — each record shows import time, row count, total cost, status (COMPLETED in green / FAILED in red), and who imported it"
+      },
+      "gcpSourceData": {
+        "title": "GCP Source Data",
+        "description": "Configure GCP service account credentials and BigQuery connection info (Super Admin only). The system uses these to call GCP Cloud Billing API and Resource Manager API, with per-customer connections enforcing API-level data isolation.",
+        "step1": "Click \"Add Connection\" — paste the GCP service account JSON; the system auto-extracts client_email and private_key, no manual entry needed",
+        "step2": "Fill in BigQuery config: Project ID, Dataset name, and table name — these are required for cost imports to read GCP billing data",
+        "step3": "Click \"Test\" to verify — the test calls the GCP Billing API and on success shows accessible billing accounts; on failure shows the specific error",
+        "step4": "In Customer Management, bind this connection to the customer — once bound, that customer's API calls use their own credentials, ensuring multi-customer data isolation"
+      },
+      "gcpBillingAccounts": {
+        "title": "GCP Billing Accounts",
+        "description": "GCP charges are summarized at the billing account level. Recording which billing accounts belong to which customer is the foundation of correct cost attribution. A customer can have multiple billing accounts.",
+        "step1": "Click \"Create\" — enter the GCP billing account ID (format: XXXXXX-XXXXXX-XXXXXX, found in GCP Console → Billing)",
+        "step2": "Alternatively, use \"Import from GCP\" — the system uses credentials to auto-list available billing accounts; click to import",
+        "step3": "Link the billing account to a customer — when cost data is imported, the system uses this link to attribute charges correctly",
+        "step4": "Verify the link is correct — an incorrect association means invoices go to the wrong customer"
+      },
+      "gcpProjects": {
+        "title": "GCP Projects",
+        "description": "GCP cost data is tagged by project ID. Projects must be linked to a billing account and a customer to form the complete attribution chain (Project → Billing Account → Customer) for costs to be correctly assigned.",
+        "step1": "Option 1 — Manual: enter the GCP project ID and wait ~1 second; the system auto-calls the Resource Manager API to fetch the project name and number",
+        "step2": "Option 2 — Import from GCP: select a billing account → click \"Load Projects\" → the system lists all projects → click \"Import\" to add",
+        "step3": "Link the project to a billing account — clarifies which billing account bears this project's costs",
+        "step4": "Assign to a customer — completes the chain Project → Billing Account → Customer; invoice runs use this to aggregate costs",
+        "step5": "When editing, fill in IAM Role (optional) and click \"Sync from GCP\" to refresh the project name — names are always read-only, sourced from official GCP data"
+      },
+      "gcpSkuGroups": {
+        "title": "GCP SKU Groups",
+        "description": "GCP bills contain hundreds of SKUs. Displaying them all on an invoice is unreadable. SKU groups map SKUs into human-readable categories like \"Compute\" or \"Storage\", and invoices are summarized by group.",
+        "step1": "Click \"Create\" — enter a group code (auto-uppercased, e.g. COMPUTE), display name (e.g. \"Compute Resources\"), and description",
+        "step2": "After creation, click \"Manage Items\" to enter the detail page — add SKUs to this group here",
+        "step3": "Add via \"Browse by Category\": use the 4-level cascade selector — Service → Resource Family → Resource Group → Usage Type — then check the SKUs to add",
+        "step4": "Add via \"Keyword Search\": enter a keyword (e.g. e2-standard, Cloud Storage) to search matching SKUs directly",
+        "step5": "SKU groups must be configured before importing cost data — the import matches each SKU to its group; ungrouped SKU costs can't be categorized on invoices"
+      },
+      "gcpRegistrations": {
+        "title": "GCP Registrations",
+        "description": "(Planned) Manage GCP customer reseller registration records, track registration status, and link to billing accounts.",
+        "step1": "Record GCP account reseller registration info and approval status",
+        "step2": "Registration records are auto-linked to billing accounts for traceability"
+      },
+      "gcpContracts": {
+        "title": "GCP Contracts",
+        "description": "(Planned) Manage GCP-related vendor contracts, including reseller agreement terms and committed use discount (CUD) commitments.",
+        "step1": "Enter GCP vendor contract info: contract number, committed spend, discount terms, and validity period",
+        "step2": "Contract data feeds into reseller cost and margin calculations, linked to CUD coverage analysis in reports"
+      },
+      "gcpCredits": {
+        "title": "GCP Credits",
+        "description": "(Planned) Manage vendor-level credits from GCP, such as promotional credits and partner rewards. Distinct from customer-level credits in Customer Management.",
+        "step1": "Enter GCP-granted credits: type, amount, validity period, and applicable conditions",
+        "step2": "Credits are automatically matched and deducted during cost calculations, reducing actual reseller costs"
+      },
+      "gcpFundings": {
+        "title": "GCP Fundings",
+        "description": "(Planned) Manage GCP funding programs such as CUD committed use discount purchases and partner fund investments.",
+        "step1": "Record GCP Funding plans: type, amount, commitment period, and usage conditions",
+        "step2": "Track funding utilization progress and remaining balance"
+      },
+      "awsSourceData": {
+        "title": "AWS Source Data",
+        "description": "(Planned) Configure AWS account credentials and Cost & Usage Report (CUR) data sources for the system to access AWS billing data.",
+        "step1": "Configure AWS IAM credentials or Role ARN, set the CUR S3 bucket path and report format",
+        "step2": "Test the connection to ensure AWS billing data can be read successfully"
+      },
+      "awsPayerAccounts": {
+        "title": "AWS Payer Accounts",
+        "description": "(Planned) Manage AWS Organizations payer accounts. Payer accounts are the top-level billing entity in AWS consolidated billing — all linked account charges roll up to the payer.",
+        "step1": "Add the AWS payer account ID and link to a customer",
+        "step2": "Configure the Cost & Usage Report S3 path and report format",
+        "step3": "The payer-to-customer link determines cost attribution — similar to GCP billing accounts"
+      },
+      "awsLinkedAccounts": {
+        "title": "AWS Linked Accounts",
+        "description": "(Planned) Manage AWS member accounts under payer accounts. Similar to GCP Projects — cost data is categorized by linked account.",
+        "step1": "Add AWS linked account IDs and bind them to a payer account",
+        "step2": "Assign linked accounts to a customer — establishing the chain: Linked Account → Payer → Customer",
+        "step3": "Supports auto-importing linked account lists from the AWS Organizations API"
+      },
+      "awsOpportunities": {
+        "title": "AWS Opportunities",
+        "description": "(Planned) Manage AWS-related business opportunities, tracking Savings Plans, Reserved Instances, and other optimization initiatives.",
+        "step1": "Create AWS opportunities: link to customer, record SP/RI purchase plans and expected savings",
+        "step2": "Track implementation progress and actual savings rates, linked to SP coverage analysis in reports"
+      },
+      "awsContracts": {
+        "title": "AWS Contracts",
+        "description": "(Planned) Manage AWS-related vendor contracts, including EDP (Enterprise Discount Program) agreements.",
+        "step1": "Enter AWS vendor contract info: contract number, EDP discount terms, committed spend, and validity period",
+        "step2": "Contract data feeds into reseller cost and margin calculations"
+      },
+      "awsCredits": {
+        "title": "AWS Credits",
+        "description": "(Planned) Manage vendor-level credits from AWS, such as APN partner credits and PoC credits.",
+        "step1": "Enter AWS-granted credits: type, amount, validity period, and applicable conditions",
+        "step2": "Credits are automatically matched and deducted during cost calculations"
+      },
+      "awsFundings": {
+        "title": "AWS Fundings",
+        "description": "(Planned) Manage AWS funding programs such as MDF (Market Development Funds) and partner investments.",
+        "step1": "Record AWS Funding plans: type, amount, usage conditions, and reimbursement requirements",
+        "step2": "Track funding utilization progress and reimbursement status"
       }
     },
     "roles": {
       "title": "Role Permissions",
-      "superAdmin": "Full system access — can manage GCP connections, users, and all customer data with no scope restrictions. Limit to 1-2 accounts per system.",
+      "superAdmin": "Full system access — can manage data source connections, users, and all customer data with no scope restrictions. Limit to 1-2 accounts per system.",
       "admin": "Administrative access within assigned customer scopes — can manage customers, billing accounts, projects, and invoices, but only for their assigned customers.",
-      "finance": "Finance team access — can view invoices, record payments, and manage credits, but cannot modify customer configuration or system settings.",
+      "finance": "Finance team access — can view invoices, record payments, manage credits and balances, but cannot modify customer configuration or system settings.",
       "viewer": "Read-only access to data within assigned scopes. Suitable for customer portal accounts where the customer just needs to view their own invoices."
     },
     "tips": {
       "title": "Best Practices",
-      "tip1": "Never enter project names manually — the system auto-fetches them from GCP to ensure they match the official name exactly",
+      "tip1": "Never enter project/account names manually — the system auto-fetches them from GCP/AWS to ensure they match official names exactly",
       "tip2": "If you find an error after locking an invoice, re-run the invoice batch to generate a corrected version rather than unlocking the original",
-      "tip3": "Create one GCP Connection per customer account and bind it in Customer Management — this is the correct way to ensure multi-customer API data isolation",
+      "tip3": "Create a separate data source connection per customer and bind it in Customer Management — this is the correct way to ensure multi-customer API data isolation",
       "tip4": "Assign Customer Scopes (not admin roles) to customer-facing users — this ensures they only see their own data, enforced automatically by the backend",
-      "tip5": "Configure product groups before importing cost data — without them, imported costs will be uncategorized and cannot be properly grouped on invoices"
+      "tip5": "Configure product groups / SKU groups before importing cost data — without them, imported costs will be uncategorized and cannot be properly grouped on invoices",
+      "tip6": "Use the Opportunity feature to manage each customer's cloud vendor relationships (GCP/AWS) separately, making it easy to independently track pricing, contracts, and accounts per vendor"
     }
   },
   "gcpConnections": {
@@ -921,7 +1062,11 @@
       "apiKey": "API Key",
       "description": "Description",
       "isDefault": "Set as Default",
-      "isActive": "Active"
+      "isActive": "Active",
+      "billingProjectId": "BigQuery Project ID",
+      "billingDatasetId": "BigQuery Dataset",
+      "billingTableName": "BigQuery Table Name",
+      "billingAccountIds": "Billing Account ID Filter"
     },
     "placeholders": {
       "name": "e.g. Production Main Account",
@@ -929,13 +1074,24 @@
       "pasteJson": "Paste the full service account JSON — client_email and private_key will be extracted automatically",
       "description": "Optional description",
       "privateKeyEdit": "Leave blank to keep the existing key",
-      "apiKeyEdit": "Leave blank to keep the existing key"
+      "apiKeyEdit": "Leave blank to keep the existing key",
+      "billingProjectId": "GCP project ID where BigQuery dataset resides",
+      "billingDatasetId": "Billing export dataset name",
+      "billingTableName": "e.g. gcp_billing_export_v1_XXXXXX",
+      "billingAccountIds": "XXXXXX-XXXXXX-XXXXXX (comma separated)"
     },
     "hints": {
       "group": "Groups help you organize multiple connections. Type an existing group name or create a new one.",
       "pasteJsonHint": "You can paste the entire service account JSON file — the required fields will be extracted automatically.",
       "privateKeyEdit": "Leave blank to keep the current private key unchanged.",
-      "apiKeyEdit": "Leave blank to keep the current API key unchanged."
-    }
+      "apiKeyEdit": "Leave blank to keep the current API key unchanged.",
+      "billingConfig": "Configure BigQuery billing export to enable automatic cost data fetching. Requires Billing Export → BigQuery enabled in GCP Console.",
+      "billingAccountIds": "Optional. Leave empty to query all billing accounts."
+    },
+    "advancedSettings": "Advanced settings",
+    "billingConfig": "BigQuery Billing Config",
+    "billingConfigDesc": "Enable automatic billing data fetching from BigQuery",
+    "billingConfigured": "Configured",
+    "billingNotConfigured": "Not Configured"
   }
 }

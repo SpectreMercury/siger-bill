@@ -107,10 +107,16 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
       const bigqueryModule = require('@google-cloud/bigquery');
       const BigQuery = bigqueryModule.BigQuery;
 
-      const options = {
+      // Prefer inline credentials (from DB) over key file path (from env)
+      const options: Record<string, unknown> = {
         projectId: this.config.projectId,
-        keyFilename: this.config.keyFilePath,
       };
+
+      if (this.config.credentials) {
+        options.credentials = this.config.credentials;
+      } else if (this.config.keyFilePath) {
+        options.keyFilename = this.config.keyFilePath;
+      }
 
       this.bigquery = new BigQuery(options);
       return this.bigquery;
@@ -302,6 +308,42 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
     const lastDay = new Date(year, monthNum, 0).getDate();
     return `${year}-${String(monthNum).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
   }
+}
+
+/**
+ * Create a GCP BigQuery adapter from a database GcpConnection record.
+ * Uses the connection's credentials and billing config.
+ */
+export function createGcpBigQueryAdapterFromConnection(connection: {
+  billingProjectId: string | null;
+  billingDatasetId: string | null;
+  billingTableName: string | null;
+  billingAccountIds: string[];
+  credentials: unknown;
+  authType: string;
+}): GcpBigQueryAdapter {
+  if (!connection.billingProjectId || !connection.billingDatasetId || !connection.billingTableName) {
+    throw new Error(
+      'GCP connection is missing BigQuery billing config. Set billingProjectId, billingDatasetId, and billingTableName.'
+    );
+  }
+
+  if (connection.authType !== 'SERVICE_ACCOUNT') {
+    throw new Error('BigQuery billing adapter requires a SERVICE_ACCOUNT connection type.');
+  }
+
+  const creds = connection.credentials as { client_email: string; private_key: string };
+  if (!creds.client_email || !creds.private_key) {
+    throw new Error('SERVICE_ACCOUNT credentials must include client_email and private_key.');
+  }
+
+  return new GcpBigQueryAdapter({
+    projectId: connection.billingProjectId,
+    datasetId: connection.billingDatasetId,
+    tableName: connection.billingTableName,
+    credentials: { client_email: creds.client_email, private_key: creds.private_key },
+    billingAccountIds: connection.billingAccountIds.length > 0 ? connection.billingAccountIds : undefined,
+  });
 }
 
 /**

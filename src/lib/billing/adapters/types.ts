@@ -150,8 +150,14 @@ export interface GcpBigQueryAdapterConfig {
   /** BigQuery table name (usually 'gcp_billing_export_v1_*') */
   tableName: string;
 
-  /** Optional: Service account key path */
+  /** Optional: Service account key path (env-based) */
   keyFilePath?: string;
+
+  /** Optional: Service account credentials (DB-based, takes precedence over keyFilePath) */
+  credentials?: {
+    client_email: string;
+    private_key: string;
+  };
 
   /** Optional: Filter by billing account IDs */
   billingAccountIds?: string[];

@@ -24,15 +24,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { withPermission } from '@/lib/middleware';
 import { logInvoiceRunComplete, logInvoiceRunFailed } from '@/lib/audit';
-import { executeInvoiceRun } from '@/lib/billing';
+import { executeInvoiceRun, executeUnifiedInvoiceRun, ingestFromAdapter } from '@/lib/billing';
+import { createGcpBigQueryAdapterFromConnection } from '@/lib/billing/adapters/gcp-bigquery';
 import { generateAnalyticsSnapshots } from '@/lib/analytics/pipeline';
 import { success, serverError, notFound, badRequest } from '@/lib/utils';
-import { InvoiceRunStatus } from '@prisma/client';
+import { BillingProvider, BillingSourceType, InvoiceRunStatus } from '@prisma/client';
 import { z } from 'zod';
 
 const executeSchema = z.object({
   ingestionBatchId: z.string().uuid().optional(),
   targetCustomerId: z.string().uuid().optional(),
+  /** Set to "bigquery" to auto-fetch from BigQuery before generating invoices */
+  source: z.enum(['bigquery', 'raw_cost']).optional(),
 }).optional();
 
 /**
@@ -89,15 +92,68 @@ export const POST = withPermission(
         }
       }
 
-      // Execute the billing engine with optional targeting
-      const result = await executeInvoiceRun(
-        invoiceRunId,
-        invoiceRun.billingMonth,
-        {
-          ingestionBatchId: body?.ingestionBatchId,
-          targetCustomerId: body?.targetCustomerId,
+      const useBigQuery = body?.source === 'bigquery';
+
+      // If source is bigquery, auto-fetch data from BigQuery first
+      if (useBigQuery) {
+        // Find all active connections with billing config
+        const connections = await prisma.gcpConnection.findMany({
+          where: {
+            isActive: true,
+            billingProjectId: { not: null },
+            billingDatasetId: { not: null },
+            billingTableName: { not: null },
+          },
+        });
+
+        if (connections.length === 0) {
+          return badRequest(
+            'No GCP connections with BigQuery billing config found. Configure billing settings on at least one connection.'
+          );
         }
-      );
+
+        // Ingest from each connection
+        for (const conn of connections) {
+          try {
+            const adapter = createGcpBigQueryAdapterFromConnection(conn);
+            await ingestFromAdapter(
+              adapter,
+              invoiceRun.billingMonth,
+              context.auth.userId,
+              conn.billingAccountIds.length > 0 ? conn.billingAccountIds : undefined
+            );
+          } catch (err) {
+            console.error(`BigQuery ingest from "${conn.name}" failed:`, err);
+            // Continue with other connections
+          }
+        }
+      }
+
+      // Execute the appropriate billing engine
+      let result;
+      if (useBigQuery) {
+        // Use unified engine which reads from BillingLineItem table
+        result = await executeUnifiedInvoiceRun(
+          invoiceRunId,
+          invoiceRun.billingMonth,
+          {
+            provider: BillingProvider.GCP,
+            sourceType: BillingSourceType.BIGQUERY_EXPORT,
+            targetCustomerId: body?.targetCustomerId,
+            userId: context.auth.userId,
+          }
+        );
+      } else {
+        // Legacy: use raw cost engine
+        result = await executeInvoiceRun(
+          invoiceRunId,
+          invoiceRun.billingMonth,
+          {
+            ingestionBatchId: body?.ingestionBatchId,
+            targetCustomerId: body?.targetCustomerId,
+          }
+        );
+      }
 
       // Phase 2.6: Enhanced audit logging with metadata
       if (result.success) {

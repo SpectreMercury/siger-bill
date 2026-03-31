@@ -19,7 +19,7 @@ export {
 } from './types';
 
 // GCP BigQuery Adapter
-export { GcpBigQueryAdapter, createGcpBigQueryAdapterFromEnv } from './gcp-bigquery';
+export { GcpBigQueryAdapter, createGcpBigQueryAdapterFromEnv, createGcpBigQueryAdapterFromConnection } from './gcp-bigquery';
 
 // AWS CUR Adapter
 export { AwsCurAdapter, createAwsCurAdapterFromEnv, type AwsCurRow } from './aws-cur';

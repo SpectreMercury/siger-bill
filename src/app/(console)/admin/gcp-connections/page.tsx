@@ -27,6 +27,7 @@ import {
   FolderOpen,
   ChevronDown,
   ChevronRight,
+  Database,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,10 @@ interface GcpConnection {
   description: string | null;
   group: string;
   authType: 'SERVICE_ACCOUNT' | 'API_KEY';
+  billingProjectId: string | null;
+  billingDatasetId: string | null;
+  billingTableName: string | null;
+  billingAccountIds: string[];
   isDefault: boolean;
   isActive: boolean;
   createdAt: string;
@@ -63,6 +68,11 @@ interface FormData {
   pasteJson: string;
   // API_KEY field
   apiKey: string;
+  // BigQuery billing config
+  billingProjectId: string;
+  billingDatasetId: string;
+  billingTableName: string;
+  billingAccountIds: string;
   isDefault: boolean;
   isActive: boolean;
 }
@@ -76,6 +86,10 @@ const DEFAULT_FORM: FormData = {
   privateKey: '',
   pasteJson: '',
   apiKey: '',
+  billingProjectId: '',
+  billingDatasetId: '',
+  billingTableName: '',
+  billingAccountIds: '',
   isDefault: false,
   isActive: true,
 };
@@ -157,6 +171,11 @@ export default function GcpConnectionsPage() {
           clientEmail: parsed.client_email,
           privateKey: parsed.private_key,
           pasteJson: jsonStr,
+          // Auto-fill name and billing project from JSON
+          name: prev.name || parsed.project_id || parsed.client_email.split('@')[0] || '',
+          group: prev.group || 'default',
+          authType: 'SERVICE_ACCOUNT' as const,
+          billingProjectId: prev.billingProjectId || parsed.project_id || '',
         }));
       }
     } catch {
@@ -185,6 +204,10 @@ export default function GcpConnectionsPage() {
       privateKey: '',
       pasteJson: '',
       apiKey: '',
+      billingProjectId: conn.billingProjectId ?? '',
+      billingDatasetId: conn.billingDatasetId ?? '',
+      billingTableName: conn.billingTableName ?? '',
+      billingAccountIds: (conn.billingAccountIds ?? []).join(', '),
       isDefault: conn.isDefault,
       isActive: conn.isActive,
     });
@@ -201,12 +224,24 @@ export default function GcpConnectionsPage() {
   const handleSubmit = async () => {
     setIsSaving(true);
     try {
+      const billingAccountIdsArray = formData.billingAccountIds
+        ? formData.billingAccountIds.split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
+
+      // Auto-fill name and group if empty
+      const autoName = formData.name || formData.clientEmail?.split('@')[0] || `connection-${Date.now()}`;
+      const autoGroup = formData.group || 'default';
+
       const payload = {
-        name: formData.name,
+        name: autoName,
         description: formData.description || null,
-        group: formData.group,
+        group: autoGroup,
         authType: formData.authType,
         credentials: buildCredentials(),
+        billingProjectId: formData.billingProjectId || null,
+        billingDatasetId: formData.billingDatasetId || null,
+        billingTableName: formData.billingTableName || null,
+        billingAccountIds: billingAccountIdsArray,
         isDefault: formData.isDefault,
         isActive: formData.isActive,
       };
@@ -348,6 +383,11 @@ export default function GcpConnectionsPage() {
                 <Star className="h-3 w-3" /> {t('default')}
               </Badge>
             )}
+            {conn.billingProjectId && conn.billingDatasetId && conn.billingTableName && (
+              <Badge variant="secondary" className="gap-1">
+                <Database className="h-3 w-3" /> {t('billingConfigured')}
+              </Badge>
+            )}
             {!conn.isActive && (
               <Badge variant="secondary">{tc('inactive')}</Badge>
             )}
@@ -474,150 +514,131 @@ export default function GcpConnectionsPage() {
           onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}
           className="space-y-4"
         >
-          {/* Name */}
+          {/* Step 1: Paste service account JSON — the ONLY required action */}
           <div className="space-y-2">
-            <Label htmlFor="conn-name">{t('fields.name')} *</Label>
-            <Input
-              id="conn-name"
-              value={formData.name}
-              onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
-              placeholder={t('placeholders.name')}
-              required
+            <Label htmlFor="paste-json">
+              {editingId ? t('fields.pasteJson') : `${t('fields.pasteJson')} *`}
+            </Label>
+            <Textarea
+              id="paste-json"
+              rows={4}
+              placeholder={t('placeholders.pasteJson')}
+              value={formData.pasteJson}
+              onChange={(e) => handlePasteJson(e.target.value)}
+              className="font-mono text-xs"
             />
-          </div>
-
-          {/* Group */}
-          <div className="space-y-2">
-            <Label htmlFor="conn-group">{t('fields.group')} *</Label>
-            <Input
-              id="conn-group"
-              value={formData.group}
-              onChange={(e) => setFormData((p) => ({ ...p, group: e.target.value }))}
-              placeholder={t('placeholders.group')}
-              list="group-suggestions"
-              required
-            />
-            {existingGroups.length > 0 && (
-              <datalist id="group-suggestions">
-                {existingGroups.map((g) => <option key={g} value={g} />)}
-              </datalist>
+            {/* Show extracted info */}
+            {formData.clientEmail && (
+              <div className="flex items-center gap-2 text-xs text-green-600">
+                <CheckCircle2 className="h-3 w-3" />
+                <span>{formData.clientEmail}</span>
+              </div>
             )}
-            <p className="text-xs text-muted-foreground">{t('hints.group')}</p>
           </div>
 
-          {/* Auth Type */}
-          <div className="space-y-2">
-            <Label>{t('fields.authType')} *</Label>
-            <div className="flex gap-3">
-              {(['SERVICE_ACCOUNT', 'API_KEY'] as const).map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setFormData((p) => ({ ...p, authType: type }))}
-                  className={`flex-1 flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
-                    formData.authType === type
-                      ? 'border-primary bg-primary/5 text-primary'
-                      : 'border-input hover:bg-muted/50'
-                  }`}
-                >
-                  {type === 'SERVICE_ACCOUNT' ? <Server className="h-4 w-4" /> : <KeyRound className="h-4 w-4" />}
-                  {type === 'SERVICE_ACCOUNT' ? 'Service Account' : 'API Key'}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Credentials — SERVICE_ACCOUNT */}
-          {formData.authType === 'SERVICE_ACCOUNT' && (
-            <div className="space-y-3 rounded-md border p-3 bg-muted/30">
-              <p className="text-xs text-muted-foreground font-medium">{t('hints.pasteJsonHint')}</p>
-              <div className="space-y-2">
-                <Label htmlFor="paste-json">{t('fields.pasteJson')}</Label>
-                <Textarea
-                  id="paste-json"
-                  rows={3}
-                  placeholder={t('placeholders.pasteJson')}
-                  value={formData.pasteJson}
-                  onChange={(e) => handlePasteJson(e.target.value)}
-                  className="font-mono text-xs"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="client-email">{t('fields.clientEmail')}{editingId ? '' : ' *'}</Label>
-                <Input
-                  id="client-email"
-                  value={formData.clientEmail}
-                  onChange={(e) => setFormData((p) => ({ ...p, clientEmail: e.target.value }))}
-                  placeholder="service-account@project.iam.gserviceaccount.com"
-                  required={!editingId}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="private-key">{t('fields.privateKey')}{editingId ? '' : ' *'}</Label>
-                <Textarea
-                  id="private-key"
-                  rows={3}
-                  value={formData.privateKey}
-                  onChange={(e) => setFormData((p) => ({ ...p, privateKey: e.target.value }))}
-                  placeholder={editingId ? t('placeholders.privateKeyEdit') : '-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----'}
-                  className="font-mono text-xs"
-                  required={!editingId}
-                />
-                {editingId && (
-                  <p className="text-xs text-muted-foreground">{t('hints.privateKeyEdit')}</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Credentials — API_KEY */}
-          {formData.authType === 'API_KEY' && (
-            <div className="space-y-2">
-              <Label htmlFor="api-key">{t('fields.apiKey')}{editingId ? '' : ' *'}</Label>
+          {/* Step 2: BigQuery billing table — 2 fields (project auto-filled from JSON) */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="billing-dataset">{t('fields.billingDatasetId')} *</Label>
               <Input
-                id="api-key"
-                type="password"
-                value={formData.apiKey}
-                onChange={(e) => setFormData((p) => ({ ...p, apiKey: e.target.value }))}
-                placeholder={editingId ? t('placeholders.apiKeyEdit') : 'AIzaSy...'}
+                id="billing-dataset"
+                value={formData.billingDatasetId}
+                onChange={(e) => setFormData((p) => ({ ...p, billingDatasetId: e.target.value }))}
+                placeholder={t('placeholders.billingDatasetId')}
                 required={!editingId}
               />
-              {editingId && (
-                <p className="text-xs text-muted-foreground">{t('hints.apiKeyEdit')}</p>
-              )}
             </div>
-          )}
-
-          {/* Description */}
-          <div className="space-y-2">
-            <Label htmlFor="conn-desc">{t('fields.description')}</Label>
-            <Input
-              id="conn-desc"
-              value={formData.description}
-              onChange={(e) => setFormData((p) => ({ ...p, description: e.target.value }))}
-              placeholder={t('placeholders.description')}
-            />
+            <div className="space-y-1">
+              <Label htmlFor="billing-table">{t('fields.billingTableName')} *</Label>
+              <Input
+                id="billing-table"
+                value={formData.billingTableName}
+                onChange={(e) => setFormData((p) => ({ ...p, billingTableName: e.target.value }))}
+                placeholder={t('placeholders.billingTableName')}
+                required={!editingId}
+              />
+            </div>
           </div>
 
-          {/* Toggles */}
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              <Switch
-                id="is-default"
-                checked={formData.isDefault}
-                onCheckedChange={(v) => setFormData((p) => ({ ...p, isDefault: v }))}
-              />
-              <Label htmlFor="is-default" className="cursor-pointer">{t('fields.isDefault')}</Label>
+          {/* Advanced: collapsed by default, for power users */}
+          <details className="group">
+            <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground select-none">
+              {t('advancedSettings') ?? 'Advanced settings'}
+            </summary>
+            <div className="mt-3 space-y-3 rounded-md border p-3 bg-muted/30">
+              <div className="space-y-1">
+                <Label htmlFor="conn-name">{t('fields.name')}</Label>
+                <Input
+                  id="conn-name"
+                  value={formData.name}
+                  onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
+                  placeholder={t('placeholders.name')}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="conn-group">{t('fields.group')}</Label>
+                <Input
+                  id="conn-group"
+                  value={formData.group}
+                  onChange={(e) => setFormData((p) => ({ ...p, group: e.target.value }))}
+                  placeholder={t('placeholders.group')}
+                  list="group-suggestions"
+                />
+                {existingGroups.length > 0 && (
+                  <datalist id="group-suggestions">
+                    {existingGroups.map((g) => <option key={g} value={g} />)}
+                  </datalist>
+                )}
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="billing-project">{t('fields.billingProjectId')}</Label>
+                <Input
+                  id="billing-project"
+                  value={formData.billingProjectId}
+                  onChange={(e) => setFormData((p) => ({ ...p, billingProjectId: e.target.value }))}
+                  placeholder={t('placeholders.billingProjectId')}
+                />
+                <p className="text-xs text-muted-foreground">{t('hints.billingProjectAutoFill') ?? 'Auto-filled from JSON'}</p>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="billing-accounts">{t('fields.billingAccountIds')}</Label>
+                <Input
+                  id="billing-accounts"
+                  value={formData.billingAccountIds}
+                  onChange={(e) => setFormData((p) => ({ ...p, billingAccountIds: e.target.value }))}
+                  placeholder={t('placeholders.billingAccountIds')}
+                />
+                <p className="text-xs text-muted-foreground">{t('hints.billingAccountIds')}</p>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="conn-desc">{t('fields.description')}</Label>
+                <Input
+                  id="conn-desc"
+                  value={formData.description}
+                  onChange={(e) => setFormData((p) => ({ ...p, description: e.target.value }))}
+                  placeholder={t('placeholders.description')}
+                />
+              </div>
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="is-default"
+                    checked={formData.isDefault}
+                    onCheckedChange={(v) => setFormData((p) => ({ ...p, isDefault: v }))}
+                  />
+                  <Label htmlFor="is-default" className="cursor-pointer">{t('fields.isDefault')}</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="is-active"
+                    checked={formData.isActive}
+                    onCheckedChange={(v) => setFormData((p) => ({ ...p, isActive: v }))}
+                  />
+                  <Label htmlFor="is-active" className="cursor-pointer">{t('fields.isActive')}</Label>
+                </div>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Switch
-                id="is-active"
-                checked={formData.isActive}
-                onCheckedChange={(v) => setFormData((p) => ({ ...p, isActive: v }))}
-              />
-              <Label htmlFor="is-active" className="cursor-pointer">{t('fields.isActive')}</Label>
-            </div>
-          </div>
+          </details>
 
           <div className="flex justify-end gap-3 pt-2">
             <Button type="button" variant="outline" onClick={() => setShowModal(false)}>

@@ -37,6 +37,8 @@ export const createCustomerSchema = z.object({
   primaryContactName: z.string().max(255).optional(),
   primaryContactEmail: z.string().email().optional(),
   gcpConnectionId: z.string().uuid().optional().nullable(),
+  /** GCP project IDs — auto-creates projects + customer bindings */
+  projectIds: z.array(z.string().min(1).max(100)).optional().default([]),
 });
 
 /**

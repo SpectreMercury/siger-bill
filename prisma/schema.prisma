@@ -1174,6 +1174,11 @@ model GcpConnection {
   ///   SERVICE_ACCOUNT: { client_email, private_key }
   ///   API_KEY:         { key }
   credentials Json        @db.JsonB
+  /// BigQuery billing export configuration (optional):
+  billingProjectId  String?  @map("billing_project_id") @db.VarChar(255)  // GCP project containing BQ dataset
+  billingDatasetId  String?  @map("billing_dataset_id") @db.VarChar(255)  // BQ dataset name
+  billingTableName  String?  @map("billing_table_name") @db.VarChar(255)  // e.g. gcp_billing_export_v1_XXXXXX
+  billingAccountIds String[] @default([]) @map("billing_account_ids")     // Filter specific billing accounts
   isDefault   Boolean     @default(false) @map("is_default") // Used as fallback by GCP auth module
   isActive    Boolean     @default(true)  @map("is_active")
   createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz

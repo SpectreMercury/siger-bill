@@ -127,22 +127,59 @@ export const POST = withPermission(
         }
       }
 
-      // Create customer
-      const customer = await prisma.customer.create({
-        data: {
-          name: data.name,
-          externalId: data.externalId,
-          billingAccountId: data.billingAccountId,
-          domain: data.domain,
-          currency: data.currency,
-          paymentTermsDays: data.paymentTermsDays,
-          primaryContactName: data.primaryContactName,
-          primaryContactEmail: data.primaryContactEmail,
-        },
+      // Create customer + auto-bind projects in a transaction
+      const customer = await prisma.$transaction(async (tx) => {
+        // 1. Create the customer
+        const newCustomer = await tx.customer.create({
+          data: {
+            name: data.name,
+            externalId: data.externalId,
+            billingAccountId: data.billingAccountId,
+            domain: data.domain,
+            currency: data.currency,
+            paymentTermsDays: data.paymentTermsDays,
+            primaryContactName: data.primaryContactName,
+            primaryContactEmail: data.primaryContactEmail,
+            gcpConnectionId: data.gcpConnectionId ?? null,
+          },
+        });
+
+        // 2. Auto-create projects and bind to customer
+        if (data.projectIds && data.projectIds.length > 0) {
+          for (const projectId of data.projectIds) {
+            // Create project if it doesn't exist
+            let project = await tx.project.findUnique({ where: { projectId } });
+            if (!project) {
+              project = await tx.project.create({
+                data: { projectId, name: projectId },
+              });
+            }
+
+            // Bind project to customer (skip if already bound)
+            const existingBinding = await tx.customerProject.findFirst({
+              where: { customerId: newCustomer.id, projectId: project.id },
+            });
+            if (!existingBinding) {
+              await tx.customerProject.create({
+                data: {
+                  customerId: newCustomer.id,
+                  projectId: project.id,
+                  isActive: true,
+                  startDate: new Date(),
+                },
+              });
+            }
+          }
+        }
+
+        return newCustomer;
       });
 
       // Audit log
-      await logCreate(context, 'customers', customer.id, customer as unknown as Record<string, unknown>);
+      await logCreate(context, 'customers', customer.id, {
+        ...customer as unknown as Record<string, unknown>,
+        projectIds: data.projectIds,
+      });
 
       return created(customer);
 
