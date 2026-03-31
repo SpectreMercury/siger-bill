@@ -140,7 +140,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     console.error('Login error:', error);
     const errMsg = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: 'Authentication failed', detail: errMsg, code: 'INTERNAL_ERROR' },
+      {
+        error: 'Authentication failed',
+        detail: errMsg,
+        code: 'INTERNAL_ERROR',
+        envCheck: {
+          hasDbUrl: !!process.env.DATABASE_URL,
+          dbUrlPrefix: process.env.DATABASE_URL?.substring(0, 15) || 'NOT_SET',
+          hasJwtSecret: !!process.env.JWT_SECRET,
+        },
+      },
       { status: 500 }
     );
   }
