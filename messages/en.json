@@ -98,26 +98,49 @@
   },
   "nav": {
     "main": {
+      "title": "Main",
       "dashboard": "Dashboard",
-      "invoices": "Invoices",
+      "reports": "Reports",
+      "users": "User Management",
+      "auditLogs": "Audit Logs",
       "settings": "Settings"
     },
-    "admin": {
-      "title": "Administration",
+    "finance": {
+      "title": "Finance",
+      "invoices": "Invoices",
+      "invoiceRuns": "Invoice Runs",
+      "balance": "Balance & Top-up",
+      "payments": "Payments",
+      "reconciliation": "Reconciliation"
+    },
+    "customer": {
+      "title": "Customer Mgmt",
       "customers": "Customers",
-      "billingAccounts": "Billing Accounts",
-      "projects": "Projects",
-      "productGroups": "Product Groups",
+      "contracts": "Contracts",
       "pricingLists": "Pricing Lists",
       "credits": "Credits",
       "specialRules": "Special Rules",
-      "invoiceRuns": "Invoice Runs",
-      "payments": "Payments",
-      "rawCostImports": "Cost Imports",
-      "reconciliation": "Reconciliation",
-      "users": "Users",
-      "auditLogs": "Audit Logs",
-      "gcpConnections": "GCP Connections"
+      "rawCostImports": "Cost Imports"
+    },
+    "operations": {
+      "title": "Operations",
+      "gcp": "GCP",
+      "aws": "AWS",
+      "gcpSourceData": "Source Data",
+      "gcpBillingAccounts": "Billing Accounts",
+      "gcpProjects": "Projects",
+      "gcpSkuGroups": "SKU Groups",
+      "gcpRegistrations": "Registrations",
+      "gcpContracts": "Contracts",
+      "gcpCredits": "Credits",
+      "gcpFundings": "Fundings",
+      "awsSourceData": "Source Data",
+      "awsPayerAccounts": "Payer Accounts",
+      "awsLinkedAccounts": "Linked Accounts",
+      "awsOpportunities": "Opportunities",
+      "awsContracts": "Contracts",
+      "awsCredits": "Credits",
+      "awsFundings": "Fundings"
     }
   },
   "header": {

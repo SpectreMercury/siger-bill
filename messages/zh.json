@@ -98,26 +98,49 @@
   },
   "nav": {
     "main": {
-      "dashboard": "仪表盘",
-      "invoices": "发票",
+      "title": "主功能",
+      "dashboard": "Dashboard",
+      "reports": "运营报表",
+      "users": "用户管理",
+      "auditLogs": "审计日志",
       "settings": "设置"
     },
-    "admin": {
-      "title": "管理中心",
-      "customers": "客户管理",
-      "billingAccounts": "账单账户",
-      "projects": "项目",
-      "productGroups": "产品组",
+    "finance": {
+      "title": "财务管理",
+      "invoices": "Invoices",
+      "invoiceRuns": "发票批次",
+      "balance": "充值 & 余额",
+      "payments": "付款进度",
+      "reconciliation": "对账"
+    },
+    "customer": {
+      "title": "客户管理",
+      "customers": "客户",
+      "contracts": "合同",
       "pricingLists": "定价列表",
       "credits": "信用额度",
       "specialRules": "特殊规则",
-      "invoiceRuns": "发票批次",
-      "payments": "付款记录",
-      "rawCostImports": "成本导入",
-      "reconciliation": "对账",
-      "users": "用户管理",
-      "auditLogs": "审计日志",
-      "gcpConnections": "GCP 连接"
+      "rawCostImports": "成本导入"
+    },
+    "operations": {
+      "title": "运营管理",
+      "gcp": "GCP",
+      "aws": "AWS",
+      "gcpSourceData": "数据源",
+      "gcpBillingAccounts": "账单账户",
+      "gcpProjects": "项目",
+      "gcpSkuGroups": "SKU 组",
+      "gcpRegistrations": "注册",
+      "gcpContracts": "合同",
+      "gcpCredits": "Credits",
+      "gcpFundings": "Fundings",
+      "awsSourceData": "数据源",
+      "awsPayerAccounts": "Payer Accounts",
+      "awsLinkedAccounts": "Linked Accounts",
+      "awsOpportunities": "Opportunities",
+      "awsContracts": "合同",
+      "awsCredits": "Credits",
+      "awsFundings": "Fundings"
     }
   },
   "header": {
