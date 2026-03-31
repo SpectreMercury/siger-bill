@@ -138,6 +138,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   } catch (error) {
     console.error('Login error:', error);
-    return serverError('Authentication failed');
+    const errMsg = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: 'Authentication failed', detail: errMsg, code: 'INTERNAL_ERROR' },
+      { status: 500 }
+    );
   }
 }
