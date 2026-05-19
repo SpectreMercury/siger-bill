@@ -812,6 +812,7 @@ model SkuGroup {
   skuGroupMappings  SkuGroupMapping[]
   pricingRuleGroups PricingRuleSkuGroup[]
   specialRules      SpecialRule[] // Phase 3.5
+  credits           Credit[]      @relation("CreditMatchSkuGroup")
 
   @@map("sku_groups")
 }
@@ -920,11 +921,14 @@ model PricingRuleSkuGroup {
 // PHASE 3.3: CREDITS ENGINE
 // =============================================================================
 
-/// Credit type enumeration
+/// Credit type enumeration — mirrors GCP's credit categories
 enum CreditType {
-  PROMOTION // Marketing/promotional credits
-  CONTRACT // Contractual committed credits
-  FLEX // Flexible/discretionary credits
+  DISCOUNT                              // Generic discount
+  SUSTAINED_USAGE_DISCOUNT              // GCP automatic sustained-use discount
+  COMMITTED_USAGE_DISCOUNT              // GCP CUD (committed usage discount)
+  COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE  // GCP $-based CUD
+  PROMOTION                             // Marketing / promotional credits
+  SUBSCRIPTION_BENEFIT                  // Subscription-bundled benefit
 
   @@map("credit_type")
 }
@@ -938,12 +942,18 @@ enum CreditStatus {
   @@map("credit_status")
 }
 
-/// Customer credits - promotional, contractual, or flexible credits
+/// Customer credits - promotional, contractual, or flexible credits.
+/// A credit is always bound to a customer; the optional match* fields let the
+/// credit narrow its applicability to a specific SKU / SKU group / project.
+/// When all match* fields are null, the credit applies to that customer's
+/// entire invoice (the default unrestricted behavior).
 model Credit {
   id               String       @id @default(uuid()) @db.Uuid
   customerId       String       @map("customer_id") @db.Uuid
   billingAccountId String?      @map("billing_account_id") @db.VarChar(100) // Optional: scope to billing account
-  type             CreditType
+  /// A credit can carry one or more GCP credit categories simultaneously.
+  /// Stored as a Postgres array of credit_type enum values.
+  types            CreditType[] @default([])
   totalAmount      Decimal      @map("total_amount") @db.Decimal(18, 4)
   remainingAmount  Decimal      @map("remaining_amount") @db.Decimal(18, 4)
   currency         String       @default("USD") @db.VarChar(3)
@@ -953,16 +963,25 @@ model Credit {
   status           CreditStatus @default(ACTIVE)
   sourceReference  String?      @map("source_reference") @db.VarChar(255) // External reference (contract ID, promo code, etc.)
   description      String?      @db.Text
-  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Optional scope filters (all nullable, combined with AND).
+  // All null = unrestricted, applies to the customer's whole invoice.
+  matchSkuId      String? @map("match_sku_id") @db.VarChar(100) // Raw GCP SKU id
+  matchSkuGroupId String? @map("match_sku_group_id") @db.Uuid   // FK to sku_groups
+  matchProjectId  String? @map("match_project_id") @db.VarChar(100) // Raw GCP project id
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  matchSkuGroup SkuGroup?      @relation("CreditMatchSkuGroup", fields: [matchSkuGroupId], references: [id], onDelete: SetNull)
   ledgerEntries CreditLedger[]
 
   @@index([customerId, status])
   @@index([validFrom, validTo])
   @@index([status])
+  @@index([matchSkuGroupId])
   @@map("credits")
 }
 

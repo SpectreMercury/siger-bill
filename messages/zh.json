@@ -268,7 +268,12 @@
       "noResults": "未找到项目",
       "saveChanges": "保存更改",
       "loadFailed": "加载绑定失败",
-      "saveFailed": "保存失败"
+      "saveFailed": "保存失败",
+      "alreadySelected": "已选中，点击移除",
+      "boundToOther": "已被其他客户绑定，无法添加",
+      "selfBoundTag": "已选",
+      "otherBoundTag": "绑给",
+      "unnamedProject": "(无名称)"
     },
     "projectIds": "GCP 项目 ID",
     "projectIdsPlaceholder": "输入 GCP 项目 ID，多个用逗号或换行分隔\n如：my-project-1, my-project-2",
@@ -289,6 +294,7 @@
     "gcpConnectionNone": "不绑定（使用全局默认）",
     "gcpConnectionHint": "绑定后，该客户的所有 GCP API 调用（账单账户查询、项目信息同步）都将使用此连接",
     "projects": "项目",
+    "projectsCountTooltip": "点击查看/管理项目",
     "manageProjects": "管理项目"
   },
   "users": {
@@ -653,6 +659,13 @@
     "actions": {
       "create": "新增配置"
     },
+    "filters": {
+      "title": "过滤器",
+      "customerSearchPlaceholder": "搜索客户 (名称或 external ID)...",
+      "customerFilterHint": "选中客户后，只显示当前绑定到这些客户的 project。空则显示全部。",
+      "noCustomers": "未找到匹配客户",
+      "clearAll": "清空"
+    },
     "placeholders": {
       "projectId": "例如 my-prod-project-001",
       "name": "选择项目名称",
@@ -682,10 +695,12 @@
     "validTo": "失效日期",
     "status": "状态",
     "types": {
-      "promotional": "促销",
-      "commitment": "承诺",
-      "goodwill": "善意",
-      "refund": "退款"
+      "DISCOUNT": "折扣",
+      "SUSTAINED_USAGE_DISCOUNT": "持续使用折扣",
+      "COMMITTED_USAGE_DISCOUNT": "承诺使用折扣 (CUD)",
+      "COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE": "承诺使用折扣 ($ 基)",
+      "PROMOTION": "促销",
+      "SUBSCRIPTION_BENEFIT": "订阅权益"
     },
     "actions": {
       "create": "添加额度"

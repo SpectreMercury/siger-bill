@@ -12,7 +12,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { ColumnDef } from '@tanstack/react-table';
 import { api } from '@/lib/client/api';
-import { PaginatedResponse } from '@/lib/client/types';
+import { PaginatedResponse, Customer } from '@/lib/client/types';
 import { DataTable, Alert } from '@/components/ui';
 import { Card } from '@/components/ui/shadcn/card';
 import { Badge } from '@/components/ui/shadcn/badge';
@@ -28,11 +28,8 @@ import {
 } from '@/components/ui/shadcn/select';
 import { Modal } from '@/components/ui/Modal';
 import { Can } from '@/components/auth';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
-import {
-  PROJECT_NAME_OPTIONS,
-  HAS_PROJECT_NAME_OPTIONS,
-} from '@/lib/constants/project-names';
+import { Plus, Pencil, Trash2, Check, X, Filter } from 'lucide-react';
+import { PROJECT_NAME_OPTIONS } from '@/lib/constants/project-names';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -88,6 +85,7 @@ export default function ProjectBillingConfigsPage() {
 
   const [configs, setConfigs] = useState<ProjectBillingConfig[]>([]);
   const [billingAccounts, setBillingAccounts] = useState<BillingAccountOption[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -100,23 +98,56 @@ export default function ProjectBillingConfigsPage() {
   const [deleting, setDeleting] = useState<ProjectBillingConfig | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Customer multi-select filter state
+  const [selectedCustomerIds, setSelectedCustomerIds] = useState<string[]>([]);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
+
+  const filteredCustomers = useMemo(() => {
+    const q = customerSearchQuery.trim().toLowerCase();
+    if (!q) return customers;
+    return customers.filter((c) =>
+      c.name.toLowerCase().includes(q) ||
+      (c.externalId?.toLowerCase().includes(q) ?? false)
+    );
+  }, [customers, customerSearchQuery]);
+
+  const toggleCustomer = (id: string) => {
+    setSelectedCustomerIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const customerById = useMemo(() => {
+    const m = new Map<string, Customer>();
+    customers.forEach((c) => m.set(c.id, c));
+    return m;
+  }, [customers]);
+
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const [configsRes, baRes] = await Promise.all([
-        api.get<PaginatedResponse<ProjectBillingConfig>>('/project-billing-configs?limit=200'),
+      // Configs: include customer filter if any selected
+      const configsUrl = selectedCustomerIds.length > 0
+        ? `/project-billing-configs?limit=200&customerIds=${selectedCustomerIds.join(',')}`
+        : '/project-billing-configs?limit=200';
+
+      const [configsRes, baRes, customersRes] = await Promise.all([
+        api.get<PaginatedResponse<ProjectBillingConfig>>(configsUrl),
         api.get<PaginatedResponse<BillingAccountOption>>('/billing-accounts?limit=200'),
+        api.get<PaginatedResponse<Customer>>('/customers?limit=500'),
       ]);
       setConfigs(configsRes.data || []);
       setBillingAccounts(baRes.data || []);
+      setCustomers(customersRes.data || []);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : t('loadFailed'));
     } finally {
       setIsLoading(false);
     }
-  }, [t]);
+  }, [t, selectedCustomerIds]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -283,6 +314,89 @@ export default function ProjectBillingConfigsPage() {
         <Alert variant="error" onClose={() => setError(null)}>{error}</Alert>
       )}
 
+      {/* Filter bar */}
+      <Card className="p-4">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Filter className="h-4 w-4 text-muted-foreground" />
+            <span>{t('filters.title')}</span>
+          </div>
+
+          {/* Selected customer chips */}
+          {selectedCustomerIds.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {selectedCustomerIds.map((id) => {
+                const c = customerById.get(id);
+                if (!c) return null;
+                return (
+                  <Badge key={id} variant="secondary" className="gap-1">
+                    {c.name}
+                    {c.externalId && <span className="text-muted-foreground text-xs">({c.externalId})</span>}
+                    <button
+                      type="button"
+                      onClick={() => toggleCustomer(id)}
+                      className="hover:text-destructive ml-0.5"
+                      aria-label={`Remove ${c.name}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setSelectedCustomerIds([])}
+                className="text-xs text-muted-foreground hover:text-foreground underline ml-1 self-center"
+              >
+                {t('filters.clearAll')}
+              </button>
+            </div>
+          )}
+
+          {/* Customer searchable dropdown */}
+          <div className="relative max-w-md">
+            <Input
+              type="text"
+              placeholder={t('filters.customerSearchPlaceholder')}
+              value={customerSearchQuery}
+              onChange={(e) => { setCustomerSearchQuery(e.target.value); setCustomerDropdownOpen(true); }}
+              onFocus={() => setCustomerDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setCustomerDropdownOpen(false), 150)}
+            />
+            {customerDropdownOpen && (
+              <div className="absolute z-10 top-full left-0 right-0 mt-1 max-h-64 overflow-auto rounded-md border bg-popover shadow-md">
+                {filteredCustomers.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-muted-foreground">
+                    {t('filters.noCustomers')}
+                  </div>
+                ) : (
+                  filteredCustomers.map((c) => {
+                    const selected = selectedCustomerIds.includes(c.id);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onMouseDown={(e) => { e.preventDefault(); toggleCustomer(c.id); }}
+                        className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-muted/50 ${selected ? 'bg-primary/5' : ''}`}
+                      >
+                        <Check className={`h-4 w-4 ${selected ? 'opacity-100' : 'opacity-0'}`} />
+                        <span className="flex-1">{c.name}</span>
+                        {c.externalId && (
+                          <span className="text-xs text-muted-foreground font-mono">{c.externalId}</span>
+                        )}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t('filters.customerFilterHint')}
+          </p>
+        </div>
+      </Card>
+
       <Card>
         <DataTable
           data={configs}
@@ -318,32 +432,20 @@ export default function ProjectBillingConfigsPage() {
 
           <div className="space-y-2">
             <Label htmlFor="name">{t('name')}</Label>
-            {HAS_PROJECT_NAME_OPTIONS ? (
-              <Select
-                value={formData.name || 'none'}
-                onValueChange={(v) => setFormData({ ...formData, name: v === 'none' ? '' : v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t('placeholders.name')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">—</SelectItem>
-                  {PROJECT_NAME_OPTIONS.map((opt) => (
-                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <>
-                <Input
-                  id="name"
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder={t('placeholders.name')}
-                />
-                <p className="text-xs text-amber-600">{t('hints.nameOptionsTodo')}</p>
-              </>
+            <Input
+              id="name"
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder={t('placeholders.name')}
+              list={PROJECT_NAME_OPTIONS.length > 0 ? 'project-name-options' : undefined}
+            />
+            {PROJECT_NAME_OPTIONS.length > 0 && (
+              <datalist id="project-name-options">
+                {PROJECT_NAME_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt} />
+                ))}
+              </datalist>
             )}
           </div>
 

@@ -21,9 +21,18 @@ import {
 } from '@/lib/utils';
 import { z } from 'zod';
 
+const CREDIT_TYPES = [
+  'DISCOUNT',
+  'SUSTAINED_USAGE_DISCOUNT',
+  'COMMITTED_USAGE_DISCOUNT',
+  'COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE',
+  'PROMOTION',
+  'SUBSCRIPTION_BENEFIT',
+] as const;
+
 const createCreditSchema = z.object({
   customerId: z.string().uuid(),
-  type: z.enum(['PROMOTIONAL', 'COMMITMENT', 'GOODWILL', 'REFUND']),
+  types: z.array(z.enum(CREDIT_TYPES)).min(1, 'At least one type is required'),
   totalAmount: z.number().positive(),
   description: z.string().optional(),
   validFrom: z.string(), // Date string YYYY-MM-DD
@@ -32,6 +41,10 @@ const createCreditSchema = z.object({
   currency: z.string().length(3).optional().default('USD'),
   allowCarryOver: z.boolean().optional().default(false),
   sourceReference: z.string().optional(),
+  // Optional scope filters (all null = unrestricted)
+  matchSkuId: z.string().trim().min(1).max(100).optional().nullable(),
+  matchSkuGroupId: z.string().uuid().optional().nullable(),
+  matchProjectId: z.string().trim().min(1).max(100).optional().nullable(),
 });
 
 /**
@@ -47,7 +60,8 @@ export const GET = withPermission(
 
       // Parse filters
       const customerId = searchParams.get('customerId');
-      const type = searchParams.get('type');
+      // `type` query param accepts comma-separated values → match any
+      const typeParam = searchParams.get('type');
       const status = searchParams.get('status');
       const page = parseInt(searchParams.get('page') || '1', 10);
       const limit = Math.min(parseInt(searchParams.get('limit') || '50', 10), 100);
@@ -59,8 +73,16 @@ export const GET = withPermission(
       if (customerId) {
         where.customerId = customerId;
       }
-      if (type && ['PROMOTIONAL', 'COMMITMENT', 'GOODWILL', 'REFUND'].includes(type)) {
-        where.type = type as CreditType;
+      if (typeParam) {
+        const requested = typeParam
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s): s is (typeof CREDIT_TYPES)[number] =>
+            (CREDIT_TYPES as readonly string[]).includes(s)
+          );
+        if (requested.length > 0) {
+          where.types = { hasSome: requested as CreditType[] };
+        }
       }
       if (status && ['ACTIVE', 'EXHAUSTED', 'EXPIRED', 'CANCELLED'].includes(status)) {
         where.status = status as CreditStatus;
@@ -75,11 +97,10 @@ export const GET = withPermission(
           orderBy: { createdAt: 'desc' },
           include: {
             customer: {
-              select: {
-                id: true,
-                name: true,
-                externalId: true,
-              },
+              select: { id: true, name: true, externalId: true },
+            },
+            matchSkuGroup: {
+              select: { id: true, code: true, name: true },
             },
           },
         }),
@@ -91,7 +112,7 @@ export const GET = withPermission(
         id: credit.id,
         customerId: credit.customerId,
         customer: credit.customer,
-        type: credit.type,
+        types: credit.types,
         totalAmount: credit.totalAmount.toString(),
         remainingAmount: credit.remainingAmount.toString(),
         currency: credit.currency,
@@ -102,6 +123,9 @@ export const GET = withPermission(
         description: credit.description,
         sourceReference: credit.sourceReference,
         allowCarryOver: credit.allowCarryOver,
+        matchSkuId: credit.matchSkuId,
+        matchSkuGroup: credit.matchSkuGroup,
+        matchProjectId: credit.matchProjectId,
         createdAt: credit.createdAt,
         updatedAt: credit.updatedAt,
       }));
@@ -156,13 +180,19 @@ export const POST = withPermission(
         return serverError('Valid from date must be before valid to date');
       }
 
+      // Validate SkuGroup if provided
+      if (data.matchSkuGroupId) {
+        const grp = await prisma.skuGroup.findUnique({ where: { id: data.matchSkuGroupId } });
+        if (!grp) return notFound('SKU group');
+      }
+
       // Create credit
       const credit = await prisma.credit.create({
         data: {
           customerId: data.customerId,
-          type: data.type as CreditType,
+          types: data.types as CreditType[],
           totalAmount: data.totalAmount,
-          remainingAmount: data.totalAmount, // Initially, remaining = total
+          remainingAmount: data.totalAmount,
           currency: data.currency || 'USD',
           validFrom,
           validTo,
@@ -171,15 +201,13 @@ export const POST = withPermission(
           allowCarryOver: data.allowCarryOver ?? false,
           sourceReference: data.sourceReference,
           status: CreditStatus.ACTIVE,
+          matchSkuId: data.matchSkuId ?? null,
+          matchSkuGroupId: data.matchSkuGroupId ?? null,
+          matchProjectId: data.matchProjectId ?? null,
         },
         include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
-              externalId: true,
-            },
-          },
+          customer: { select: { id: true, name: true, externalId: true } },
+          matchSkuGroup: { select: { id: true, code: true, name: true } },
         },
       });
 
@@ -187,17 +215,20 @@ export const POST = withPermission(
       await logCreate(context, 'credits', credit.id, {
         customerId: credit.customerId,
         customerName: credit.customer.name,
-        type: credit.type,
+        types: credit.types,
         totalAmount: credit.totalAmount.toString(),
         validFrom: credit.validFrom,
         validTo: credit.validTo,
+        matchSkuId: credit.matchSkuId,
+        matchSkuGroupId: credit.matchSkuGroupId,
+        matchProjectId: credit.matchProjectId,
       });
 
       return created({
         id: credit.id,
         customerId: credit.customerId,
         customer: credit.customer,
-        type: credit.type,
+        types: credit.types,
         totalAmount: credit.totalAmount.toString(),
         remainingAmount: credit.remainingAmount.toString(),
         currency: credit.currency,
@@ -206,6 +237,9 @@ export const POST = withPermission(
         status: credit.status,
         isActive: true,
         description: credit.description,
+        matchSkuId: credit.matchSkuId,
+        matchSkuGroup: credit.matchSkuGroup,
+        matchProjectId: credit.matchProjectId,
         createdAt: credit.createdAt,
       });
     } catch (error) {

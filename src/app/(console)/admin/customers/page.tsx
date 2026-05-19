@@ -25,7 +25,6 @@ import { ManageProjectsDrawer } from '@/components/admin/ManageProjectsDrawer';
 import { Plus, ExternalLink, Cloud, FolderTree } from 'lucide-react';
 import Link from 'next/link';
 
-const CHIP_CAP = 3;
 
 interface GcpConnectionOption {
   id: string;
@@ -121,42 +120,18 @@ export default function CustomersPage() {
           if (count === 0) {
             return <span className="text-muted-foreground text-sm">—</span>;
           }
-          const visible = projects.slice(0, CHIP_CAP);
-          const overflow = count - visible.length;
           return (
-            <div className="flex items-center gap-1 flex-wrap max-w-[280px]">
-              {visible.map((p) => (
-                <Link
-                  key={p.projectId}
-                  href={`/admin/project-billing-configs?search=${encodeURIComponent(p.projectId)}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <Badge
-                    variant="outline"
-                    className={`font-mono text-xs max-w-[140px] truncate hover:bg-muted ${
-                      !p.billable ? 'opacity-60' : ''
-                    }`}
-                    title={p.name ? `${p.projectId} · ${p.name}` : p.projectId}
-                  >
-                    {p.projectId}
-                  </Badge>
-                </Link>
-              ))}
-              {overflow > 0 && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDrawerCustomer({ id: row.original.id, name: row.original.name });
-                  }}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  <Badge variant="secondary" className="text-xs">
-                    +{overflow}
-                  </Badge>
-                </button>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDrawerCustomer({ id: row.original.id, name: row.original.name });
+              }}
+              className="hover:opacity-80"
+              title={t('projectsCountTooltip')}
+            >
+              <Badge variant="secondary" className="font-mono">{count}</Badge>
+            </button>
           );
         },
       },

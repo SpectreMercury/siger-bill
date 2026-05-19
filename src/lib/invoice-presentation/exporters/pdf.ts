@@ -69,7 +69,7 @@ function generateInvoiceHTML(
         (credit) => `
         <tr>
           <td>${escapeHTML(credit.description)}</td>
-          <td>${credit.creditType}</td>
+          <td>${credit.creditTypes.join(', ')}</td>
           <td class="money">${formatCurrency(credit.appliedAmount, currency)}</td>
         </tr>
       `

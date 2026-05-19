@@ -268,7 +268,12 @@
       "noResults": "No projects found",
       "saveChanges": "Save changes",
       "loadFailed": "Failed to load bindings",
-      "saveFailed": "Failed to save changes"
+      "saveFailed": "Failed to save changes",
+      "alreadySelected": "Selected — click to remove",
+      "boundToOther": "Already bound to another customer — cannot add",
+      "selfBoundTag": "Selected",
+      "otherBoundTag": "Bound to",
+      "unnamedProject": "(no name)"
     },
     "projectIds": "GCP Project IDs",
     "projectIdsPlaceholder": "Enter GCP project IDs, separated by comma or newline\ne.g. my-project-1, my-project-2",
@@ -289,6 +294,7 @@
     "gcpConnectionNone": "None (use global default)",
     "gcpConnectionHint": "When set, all GCP API calls for this customer (billing accounts, project info) will use this connection",
     "projects": "Projects",
+    "projectsCountTooltip": "Click to view / manage projects",
     "manageProjects": "Manage projects"
   },
   "users": {
@@ -653,6 +659,13 @@
     "actions": {
       "create": "New Config"
     },
+    "filters": {
+      "title": "Filters",
+      "customerSearchPlaceholder": "Search customers (name or external ID)...",
+      "customerFilterHint": "When customers are selected, only projects currently bound to those customers are shown. Empty = all.",
+      "noCustomers": "No matching customers",
+      "clearAll": "Clear all"
+    },
     "placeholders": {
       "projectId": "e.g. my-prod-project-001",
       "name": "Select project name",
@@ -682,10 +695,12 @@
     "validTo": "Valid To",
     "status": "Status",
     "types": {
-      "promotional": "Promotional",
-      "commitment": "Commitment",
-      "goodwill": "Goodwill",
-      "refund": "Refund"
+      "DISCOUNT": "Discount",
+      "SUSTAINED_USAGE_DISCOUNT": "Sustained Usage Discount",
+      "COMMITTED_USAGE_DISCOUNT": "Committed Usage Discount (CUD)",
+      "COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE": "Committed Usage Discount ($ base)",
+      "PROMOTION": "Promotion",
+      "SUBSCRIPTION_BENEFIT": "Subscription Benefit"
     },
     "actions": {
       "create": "Add Credit"

@@ -319,7 +319,14 @@ export const updatePricingRuleSchema = z
  * Credit creation schema
  */
 export const createCreditSchema = z.object({
-  type: z.enum(['PROMOTION', 'CONTRACT', 'FLEX']),
+  types: z.array(z.enum([
+    'DISCOUNT',
+    'SUSTAINED_USAGE_DISCOUNT',
+    'COMMITTED_USAGE_DISCOUNT',
+    'COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE',
+    'PROMOTION',
+    'SUBSCRIPTION_BENEFIT',
+  ])).min(1, 'At least one type is required'),
   totalAmount: z.number().positive('Total amount must be positive'),
   currency: patterns.currency.default('USD'),
   validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),

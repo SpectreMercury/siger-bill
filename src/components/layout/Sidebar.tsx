@@ -170,13 +170,7 @@ const customerSection: NavSection = {
       permission: { resource: 'project_billing_configs', action: 'read' },
       adminOnly: true,
     },
-    {
-      nameKey: 'customer.credits',
-      href: '/admin/credits',
-      icon: <CreditCard className="h-4 w-4" />,
-      permission: { resource: 'credits', action: 'read' },
-      adminOnly: true,
-    },
+    // Credits are managed per-customer via /admin/customers/[id] Credits tab.
     {
       nameKey: 'customer.specialRules',
       href: '/admin/special-rules',

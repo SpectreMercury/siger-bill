@@ -1,26 +1,19 @@
 /**
- * Preset options for ProjectBillingConfig.name (the business-side display name
- * shown next to each project in the customer-binding UI).
+ * Suggested options for ProjectBillingConfig.name (the business-side display
+ * name shown next to each project).
  *
- * TODO(user): fill this list with the canonical project name options.
- * The drawer/registry UI will render this as a dropdown; raw free-text is not
- * allowed at the app layer (the DB column is technically nullable for backfill
- * cases, but the UI enforces selection from this list).
+ * These are NOT enforced — the UI renders a free-text input and these values
+ * are exposed via an HTML `<datalist>` purely as autocomplete suggestions.
+ * The user is free to type any value, leave it blank, or pick a suggestion.
  *
- * Example:
+ * Populate with the canonical project name options if desired:
  *   export const PROJECT_NAME_OPTIONS = [
  *     '生产环境',
  *     '测试环境',
  *     'AI 训练',
- *     // ...
  *   ] as const;
  */
 
 export const PROJECT_NAME_OPTIONS: readonly string[] = [
-  // TODO: populate
+  // Add suggestions here; users can still type anything not on this list.
 ];
-
-export type ProjectNameOption = (typeof PROJECT_NAME_OPTIONS)[number];
-
-/** Convenience: whether the catalog has any options yet (drives empty-state UX). */
-export const HAS_PROJECT_NAME_OPTIONS = PROJECT_NAME_OPTIONS.length > 0;

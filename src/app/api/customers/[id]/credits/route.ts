@@ -76,7 +76,7 @@ export const GET = withPermissionAndScope(
             id: true,
             customerId: true,
             billingAccountId: true,
-            type: true,
+            types: true,
             totalAmount: true,
             remainingAmount: true,
             currency: true,
@@ -101,7 +101,7 @@ export const GET = withPermissionAndScope(
         id: credit.id,
         customerId: credit.customerId,
         billingAccountId: credit.billingAccountId,
-        type: credit.type,
+        types: credit.types,
         totalAmount: credit.totalAmount.toString(),
         remainingAmount: credit.remainingAmount.toString(),
         currency: credit.currency,
@@ -174,7 +174,7 @@ export const POST = withPermissionAndScope(
         data: {
           customerId,
           billingAccountId: data.billingAccountId || null,
-          type: data.type,
+          types: data.types,
           totalAmount: data.totalAmount,
           remainingAmount: data.totalAmount, // Initially full amount is remaining
           currency: data.currency,
@@ -189,7 +189,7 @@ export const POST = withPermissionAndScope(
 
       // Audit log
       await logCreditCreate(context, credit.id, customerId, {
-        type: credit.type,
+        types: credit.types,
         totalAmount: credit.totalAmount.toString(),
         currency: credit.currency,
         validFrom: credit.validFrom.toISOString().split('T')[0],
@@ -203,7 +203,7 @@ export const POST = withPermissionAndScope(
         id: credit.id,
         customerId: credit.customerId,
         billingAccountId: credit.billingAccountId,
-        type: credit.type,
+        types: credit.types,
         totalAmount: credit.totalAmount.toString(),
         remainingAmount: credit.remainingAmount.toString(),
         currency: credit.currency,

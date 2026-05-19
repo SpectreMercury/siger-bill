@@ -125,13 +125,16 @@ export interface PricingList {
 export interface Credit {
   id: string;
   customerId: string;
-  type: string;
+  types: string[];
   totalAmount: string;
   remainingAmount: string;
   description: string | null;
   validFrom: string;
   validTo: string;
   isActive: boolean;
+  matchSkuId?: string | null;
+  matchSkuGroup?: { id: string; code: string; name: string } | null;
+  matchProjectId?: string | null;
 }
 
 export interface SpecialRule {

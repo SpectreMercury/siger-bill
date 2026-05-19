@@ -84,7 +84,7 @@ export async function buildInvoicePresentation(
     };
     credits?: {
       totalCreditsApplied?: string;
-      creditsUsed?: Array<{ creditId: string; creditType: string; appliedAmount: string }>;
+      creditsUsed?: Array<{ creditId: string; creditTypes: string[]; appliedAmount: string }>;
     };
   } | null;
 
@@ -333,7 +333,7 @@ function buildCreditBreakdown(
     appliedAmount: Prisma.Decimal;
     credit: {
       id: string;
-      type: string;
+      types: string[];
       description: string | null;
       totalAmount: Prisma.Decimal;
       remainingAmount: Prisma.Decimal;
@@ -343,7 +343,7 @@ function buildCreditBreakdown(
 ): CreditBreakdown[] {
   return creditApplications.map((app) => ({
     creditId: app.credit.id,
-    creditType: app.credit.type,
+    creditTypes: app.credit.types,
     description: app.credit.description || 'Credit',
     originalAmount: app.credit.totalAmount,
     appliedAmount: app.appliedAmount,

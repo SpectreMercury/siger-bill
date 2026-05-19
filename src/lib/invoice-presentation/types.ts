@@ -232,7 +232,7 @@ export interface ExportResult {
  */
 export interface CreditBreakdown {
   creditId: string;
-  creditType: string;
+  creditTypes: string[];
   description: string;
   originalAmount: Prisma.Decimal;
   appliedAmount: Prisma.Decimal;

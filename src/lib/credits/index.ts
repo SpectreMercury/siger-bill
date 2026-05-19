@@ -13,4 +13,5 @@ export {
   type CreditApplicationEntry,
   type CreditApplicationResult,
   type CreditConfigSnapshot,
+  type PricedCostEntry,
 } from './engine';

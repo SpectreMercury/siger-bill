@@ -185,7 +185,7 @@ function generateXLSXContent(
     for (const credit of creditsBreakdown) {
       creditsRows.push([
         credit.creditId,
-        credit.creditType,
+        credit.creditTypes.join(', '),
         credit.description,
         formatDecimal(credit.originalAmount),
         formatDecimal(credit.appliedAmount),

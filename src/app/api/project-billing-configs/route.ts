@@ -83,6 +83,11 @@ export const GET = withPermission(
       const projectId = searchParams.get('projectId');
       const billingAccountId = searchParams.get('billingAccountId');
       const search = searchParams.get('search');
+      // `customerIds` is comma-separated. Bridges through CustomerProject:
+      // we resolve each customer's currently-active project bindings and
+      // narrow PBC to projects bound to at least one of those customers.
+      const customerIdsParam = searchParams.get('customerIds');
+
       if (projectId) where.projectId = projectId;
       if (billingAccountId) where.billingAccountId = billingAccountId;
       if (search) {
@@ -90,6 +95,38 @@ export const GET = withPermission(
           { projectId: { contains: search, mode: 'insensitive' } },
           { name: { contains: search, mode: 'insensitive' } },
         ];
+      }
+
+      if (customerIdsParam) {
+        const customerIds = customerIdsParam
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (customerIds.length > 0) {
+          const bindings = await prisma.customerProject.findMany({
+            where: { customerId: { in: customerIds }, isActive: true },
+            select: { projectId: true },
+          });
+          const allowedProjectIds = Array.from(new Set(bindings.map((b) => b.projectId)));
+          if (allowedProjectIds.length === 0) {
+            // No bindings → empty result set without hitting PBC.
+            return success({
+              data: [],
+              pagination: { page, limit, total: 0, totalPages: 0 },
+            });
+          }
+          // Compose with any existing projectId filter (single id) safely.
+          if (typeof where.projectId === 'string') {
+            if (!allowedProjectIds.includes(where.projectId)) {
+              return success({
+                data: [],
+                pagination: { page, limit, total: 0, totalPages: 0 },
+              });
+            }
+          } else {
+            where.projectId = { in: allowedProjectIds };
+          }
+        }
       }
 
       const [rows, total] = await Promise.all([

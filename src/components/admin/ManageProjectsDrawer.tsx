@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import { useTranslations } from 'next-intl';
 import { api } from '@/lib/client/api';
 import { PaginatedResponse, Project } from '@/lib/client/types';
@@ -89,28 +90,52 @@ export function ManageProjectsDrawer({
     }
   }, [customerId, t]);
 
+  // Picker is a transient floating overlay: hidden by default, opens when the
+  // user clicks/focuses the search input, closes on Esc / outside click.
+  // Modal stays compact when closed.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerContainerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Close picker on Escape key. (Outside-click is intentionally NOT bound:
+  // the picker is now an inline body region, not a floating popover, so the
+  // user closes it explicitly via the X button on the search input.)
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPickerOpen(false);
+        searchInputRef.current?.blur();
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [pickerOpen]);
+
   useEffect(() => {
     if (open && customerId) {
       loadBindings();
       setSearchTerm('');
       setSearchResults([]);
+      setPickerOpen(false);
     }
   }, [open, customerId, loadBindings]);
 
-  // Debounced typeahead search
+  // Fetch projects only after picker is opened. Re-runs when search term
+  // changes; empty term loads default top 50.
   useEffect(() => {
+    if (!open || !pickerOpen) return;
     if (searchTimer.current) clearTimeout(searchTimer.current);
     const term = searchTerm.trim();
-    if (term.length === 0) {
-      setSearchResults([]);
-      return;
-    }
     setIsSearching(true);
     searchTimer.current = setTimeout(async () => {
       try {
-        const res = await api.get<PaginatedResponse<Project>>(
-          `/projects?search=${encodeURIComponent(term)}&limit=20`
-        );
+        const url = term.length === 0
+          ? `/projects?limit=50`
+          : `/projects?search=${encodeURIComponent(term)}&limit=50`;
+        const res = await api.get<PaginatedResponse<Project>>(url);
         setSearchResults(res.data ?? []);
       } catch (err) {
         console.error('Search failed', err);
@@ -118,11 +143,11 @@ export function ManageProjectsDrawer({
       } finally {
         setIsSearching(false);
       }
-    }, 300);
+    }, 250);
     return () => {
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
-  }, [searchTerm]);
+  }, [open, pickerOpen, searchTerm]);
 
   // Diff for the dirty indicator + save action
   const { toAdd, toRemove, hasChanges } = useMemo(() => {
@@ -191,128 +216,210 @@ export function ManageProjectsDrawer({
       isOpen={open}
       onClose={onClose}
       title={t('title', { name: customerName })}
-      size="lg"
+      size="xl"
     >
-      <div className="space-y-4">
+      {/* Tall fixed-height column. Main body region swaps between two states:
+          - picker closed → "Selected" panel (chips list) takes the body
+          - picker open  → candidate list takes the body
+          Modal height stays the same either way. */}
+      <div className="flex flex-col h-[75vh] -mt-2">
         {error && (
-          <Alert variant="error" onClose={() => setError(null)}>
+          <Alert variant="error" onClose={() => setError(null)} className="mb-3">
             {error}
           </Alert>
         )}
 
         {/* Search */}
-        <div className="space-y-2">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder={t('searchPlaceholder')}
-              className="pl-9"
-            />
-            {isSearching && (
-              <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
-            )}
-          </div>
+        <div className="shrink-0 relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            ref={searchInputRef as RefObject<HTMLInputElement>}
+            value={searchTerm}
+            onChange={(e) => { setSearchTerm(e.target.value); setPickerOpen(true); }}
+            onFocus={() => setPickerOpen(true)}
+            onClick={() => setPickerOpen(true)}
+            placeholder={t('searchPlaceholder')}
+            className="pl-9 pr-9"
+          />
+          {pickerOpen ? (
+            <button
+              type="button"
+              onClick={() => { setPickerOpen(false); setSearchTerm(''); }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-accent"
+              aria-label="close picker"
+              title="Esc"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : isSearching ? (
+            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+          ) : null}
+        </div>
 
-          {searchResults.length > 0 && (
-            <div className="max-h-48 overflow-y-auto rounded-md border bg-background">
-              {searchResults.map((p) => {
-                const selected = stagedIds.has(p.projectId);
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => (selected ? removeProject(p.projectId) : addProject(p))}
-                    className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-muted ${
-                      selected ? 'bg-muted/60' : ''
-                    }`}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="font-mono text-xs text-muted-foreground truncate">
-                        {p.projectId}
-                      </div>
-                      {p.name && (
-                        <div className="text-sm truncate">{p.name}</div>
+        {/* Body — fills remaining height. Toggles between picker and selected panel. */}
+        <div
+          ref={pickerContainerRef}
+          className="mt-3 flex-1 min-h-0 overflow-hidden rounded-md border bg-popover/30"
+        >
+          {pickerOpen ? (
+            isSearching && searchResults.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                <span className="text-sm">{tc('loading')}</span>
+              </div>
+            ) : searchResults.length === 0 ? (
+              <p className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                {searchTerm.trim().length > 0 ? t('noResults') : t('empty')}
+              </p>
+            ) : (
+              <ul role="listbox" aria-multiselectable="true" className="h-full overflow-y-auto py-1">
+                {searchResults.map((p) => {
+                  const selected = stagedIds.has(p.projectId);
+                  const boundElsewhere = (p.boundCustomers ?? []).some(
+                    (bc) => bc.customerId !== customerId
+                  );
+                  const elsewhereName = (p.boundCustomers ?? [])
+                    .filter((bc) => bc.customerId !== customerId)
+                    .map((bc) => bc.customerName)[0];
+                  const disabled = boundElsewhere && !selected;
+
+                  return (
+                    <li key={p.id} role="option" aria-selected={selected}>
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => (selected ? removeProject(p.projectId) : addProject(p))}
+                        className={`group flex w-full items-start gap-3 px-3 py-2 text-left transition-colors
+                          ${disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-accent/60 cursor-pointer'}
+                          ${selected ? 'bg-accent/40' : ''}
+                        `}
+                        title={
+                          disabled
+                            ? `${t('boundToOther')}${elsewhereName ? `: ${elsewhereName}` : ''}`
+                            : selected
+                            ? t('alreadySelected')
+                            : undefined
+                        }
+                      >
+                        <span
+                          className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] border transition-colors
+                            ${selected
+                              ? 'bg-primary border-primary'
+                              : 'border-input bg-background group-hover:border-foreground/40'}
+                          `}
+                          aria-hidden="true"
+                        >
+                          {selected && <Check className="h-3 w-3 text-primary-foreground" strokeWidth={3} />}
+                        </span>
+                        <div className="min-w-0 flex-1 leading-tight">
+                          <div className="text-sm truncate">
+                            {p.name || (
+                              <span className="text-muted-foreground italic">
+                                {t('unnamedProject')}
+                              </span>
+                            )}
+                          </div>
+                          <div className="font-mono text-[11px] text-muted-foreground truncate">
+                            {p.projectId}
+                          </div>
+                        </div>
+                        {(selected || boundElsewhere) && (
+                          <span className="ml-auto shrink-0 self-center inline-flex items-center rounded-full border bg-background/60 px-2 py-0.5 text-[11px] text-muted-foreground">
+                            {selected
+                              ? t('selfBoundTag')
+                              : elsewhereName
+                              ? `${t('otherBoundTag')} ${elsewhereName}`
+                              : t('otherBoundTag')}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )
+          ) : (
+            /* Selected panel — fills the body when picker is closed */
+            <div className="flex h-full flex-col">
+              <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b text-sm">
+                <span className="font-medium">
+                  {t('selected', { count: stagedIds.size })}
+                </span>
+                {hasChanges && (
+                  <span className="text-xs text-muted-foreground">
+                    {toAdd.length > 0 && <span className="text-emerald-600 dark:text-emerald-400">+{toAdd.length}</span>}
+                    {toAdd.length > 0 && toRemove.length > 0 && ' · '}
+                    {toRemove.length > 0 && <span className="text-rose-600 dark:text-rose-400">−{toRemove.length}</span>}
+                  </span>
+                )}
+              </div>
+              {isLoading ? (
+                <div className="flex flex-1 items-center justify-center text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  <span className="text-sm">{tc('loading')}</span>
+                </div>
+              ) : stagedList.length === 0 ? (
+                <p className="flex flex-1 items-center justify-center text-sm text-muted-foreground px-4 text-center">
+                  {t('empty')}
+                </p>
+              ) : (
+                <div className="flex-1 overflow-y-auto p-3 flex flex-wrap gap-2 content-start">
+                  {stagedList.map((item) => (
+                    <Badge
+                      key={item.projectId}
+                      variant="outline"
+                      className="pl-2 pr-1 py-1 gap-1.5 max-w-[280px] self-start"
+                    >
+                      <span className="font-mono text-xs truncate">{item.projectId}</span>
+                      {item.name && (
+                        <span className="text-xs text-muted-foreground truncate">· {item.name}</span>
                       )}
-                    </div>
-                    {selected && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                  </button>
-                );
-              })}
+                      <button
+                        type="button"
+                        onClick={() => removeProject(item.projectId)}
+                        className="ml-1 rounded-sm hover:bg-muted-foreground/20 p-0.5"
+                        aria-label={`remove ${item.projectId}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-
-          {searchTerm.trim().length > 0 && !isSearching && searchResults.length === 0 && (
-            <p className="text-xs text-muted-foreground px-1">{t('noResults')}</p>
           )}
         </div>
 
-        {/* Selected */}
-        <div className="space-y-2 border-t pt-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">
+        {/* Footer — also shows the live selected count / diff so user has
+            constant feedback while picking. */}
+        <div className="shrink-0 flex items-center justify-between gap-3 pt-3 mt-3 border-t">
+          <div className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">
               {t('selected', { count: stagedIds.size })}
             </span>
             {hasChanges && (
-              <span className="text-xs text-muted-foreground">
-                {toAdd.length > 0 && `+${toAdd.length}`}
-                {toAdd.length > 0 && toRemove.length > 0 && '  '}
-                {toRemove.length > 0 && `−${toRemove.length}`}
+              <span className="ml-2">
+                {toAdd.length > 0 && <span className="text-emerald-600 dark:text-emerald-400">+{toAdd.length}</span>}
+                {toAdd.length > 0 && toRemove.length > 0 && ' · '}
+                {toRemove.length > 0 && <span className="text-rose-600 dark:text-rose-400">−{toRemove.length}</span>}
               </span>
             )}
           </div>
-
-          {isLoading ? (
-            <div className="flex items-center justify-center py-6 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              <span className="text-sm">{tc('loading')}</span>
-            </div>
-          ) : stagedList.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">
-              {t('empty')}
-            </p>
-          ) : (
-            <div className="flex flex-wrap gap-2 max-h-56 overflow-y-auto">
-              {stagedList.map((item) => (
-                <Badge
-                  key={item.projectId}
-                  variant="outline"
-                  className="pl-2 pr-1 py-1 gap-1.5 max-w-[260px]"
-                >
-                  <span className="font-mono text-xs truncate">{item.projectId}</span>
-                  {item.name && (
-                    <span className="text-xs text-muted-foreground truncate">· {item.name}</span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => removeProject(item.projectId)}
-                    className="ml-1 rounded-sm hover:bg-muted-foreground/20 p-0.5"
-                    aria-label={`remove ${item.projectId}`}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </Badge>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex justify-end gap-3 pt-2 border-t">
-          <Button type="button" variant="outline" onClick={onClose} disabled={isSaving}>
-            {tc('cancel')}
-          </Button>
-          <Button type="button" onClick={handleSave} disabled={!hasChanges || isSaving}>
-            {isSaving ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                {tc('saving')}
-              </>
-            ) : (
-              t('saveChanges')
-            )}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSaving}>
+              {tc('cancel')}
+            </Button>
+            <Button type="button" onClick={handleSave} disabled={!hasChanges || isSaving}>
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  {tc('saving')}
+                </>
+              ) : (
+                t('saveChanges')
+              )}
+            </Button>
+          </div>
         </div>
       </div>
     </Modal>

@@ -35,6 +35,7 @@ import {
 import {
   applyCreditsToInvoice,
   captureCreditConfigSnapshot,
+  type PricedCostEntry,
 } from '@/lib/credits';
 import {
   loadApplicableSpecialRules,
@@ -594,13 +595,35 @@ export async function executeUnifiedInvoiceRun(
           });
         });
 
+        // Per-entry priced cost ≈ raw × (group.priced / group.raw) — used by
+        // credits with optional SKU/group/project scope filters.
+        const pricedEntries: PricedCostEntry[] = entriesAfterSpecialRules.map((e) => {
+          const groupCode = e.skuGroupCode ?? 'UNMAPPED';
+          const summary = pricingResult.skuGroupSummary[groupCode];
+          let pricedCost = e.cost;
+          if (summary) {
+            const rawTotal = new Prisma.Decimal(summary.rawTotal);
+            if (rawTotal.gt(0)) {
+              const pricedTotal = new Prisma.Decimal(summary.pricedTotal);
+              pricedCost = e.cost.mul(pricedTotal).div(rawTotal);
+            }
+          }
+          return {
+            skuId: e.skuId,
+            skuGroupId: e.skuGroupId ?? null,
+            projectId: e.projectId,
+            cost: pricedCost,
+          };
+        });
+
         // Apply credits
         const creditResult = await applyCreditsToInvoice(
           customer.id,
           invoice.id,
           invoiceRunId,
           customerPricedTotal,
-          billingMonth
+          billingMonth,
+          pricedEntries
         );
 
         let finalInvoiceAmount = customerPricedTotal;
@@ -622,7 +645,7 @@ export async function executeUnifiedInvoiceRun(
                   totalCreditsApplied: creditResult.totalCreditsApplied.toString(),
                   creditsUsed: creditResult.creditsUsed.map((c) => ({
                     creditId: c.creditId,
-                    creditType: c.creditType,
+                    creditTypes: c.creditTypes,
                     appliedAmount: c.appliedAmount.toString(),
                   })),
                 },

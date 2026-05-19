@@ -1,25 +1,42 @@
 /**
- * Credits Engine (Phase 3.3)
+ * Credits Engine (Phase 3.3 — extended with scope filters)
  *
  * Handles credit application to invoices during invoice runs.
  *
- * Features:
- * - Load ACTIVE credits for a customer where billingMonth overlaps [validFrom, validTo]
- * - Apply credits in validFrom ASC order (oldest first)
- * - Generate CreditLedger rows with before/after tracking
- * - Update remainingAmount atomically
- * - Support allowCarryOver=false restriction to billing month
+ * Each credit can optionally narrow its applicability via three nullable
+ * filters (combined with AND, empty = match anything):
+ *   - matchSkuId        → matches one specific GCP SKU id
+ *   - matchSkuGroupId   → matches all SKUs in this SkuGroup
+ *   - matchProjectId    → matches one specific GCP project id
+ *
+ * A credit's matched-pool is the sum of priced cost entries whose
+ * (skuId, skuGroupId, projectId) all satisfy the credit's set filters.
+ * The credit's `appliedAmount` is capped by min(remainingAmount, matchedPool,
+ * remainingInvoiceAmount). Credits with overlapping pools may each apply
+ * their full amount as long as the invoice still has room.
+ *
+ * If `pricedEntries` is not supplied (legacy callers), the matched pool falls
+ * back to remainingInvoiceAmount and filters are effectively ignored.
  */
 
 import { prisma } from '@/lib/db';
 import { Prisma, CreditStatus } from '@prisma/client';
 
 /**
- * Credit data with necessary fields for application
+ * A priced cost entry passed to the credit engine for filter-matching.
+ * Callers compute these during pricing and forward them here so credits can
+ * compute their scope-matched pool.
  */
+export interface PricedCostEntry {
+  skuId: string | null;
+  skuGroupId: string | null;
+  projectId: string | null;
+  cost: Prisma.Decimal;
+}
+
 export interface CreditForApplication {
   id: string;
-  type: string;
+  types: string[];
   totalAmount: Prisma.Decimal;
   remainingAmount: Prisma.Decimal;
   currency: string;
@@ -28,115 +45,134 @@ export interface CreditForApplication {
   allowCarryOver: boolean;
   status: CreditStatus;
   billingAccountId: string | null;
+  matchSkuId: string | null;
+  matchSkuGroupId: string | null;
+  matchProjectId: string | null;
 }
 
-/**
- * Credit application result for a single credit
- */
 export interface CreditApplicationEntry {
   creditId: string;
-  creditType: string;
+  creditTypes: string[];
   appliedAmount: Prisma.Decimal;
   creditRemainingBefore: Prisma.Decimal;
   creditRemainingAfter: Prisma.Decimal;
+  matchedPool: Prisma.Decimal | null; // null when no filters were active
 }
 
-/**
- * Result of applying credits to an invoice
- */
 export interface CreditApplicationResult {
   totalCreditsApplied: Prisma.Decimal;
   creditsUsed: CreditApplicationEntry[];
   finalAmount: Prisma.Decimal;
 }
 
-/**
- * Credit snapshot for config snapshot storage
- */
 export interface CreditConfigSnapshot {
   creditId: string;
-  type: string;
+  types: string[];
   remainingAmountBefore: string;
   validFrom: string;
   validTo: string;
   allowCarryOver: boolean;
+  matchSkuId: string | null;
+  matchSkuGroupId: string | null;
+  matchProjectId: string | null;
 }
 
 /**
  * Load applicable credits for a customer for a given billing month.
- *
- * Credits are applicable if:
- * 1. status = ACTIVE
- * 2. billingMonth overlaps [validFrom, validTo]
- * 3. remainingAmount > 0
- * 4. If allowCarryOver=false, credit validFrom must be in the billing month
- *
- * @param customerId Customer ID
- * @param billingMonth YYYY-MM format
- * @returns Credits sorted by validFrom ASC
  */
 export async function loadApplicableCredits(
   customerId: string,
   billingMonth: string
 ): Promise<CreditForApplication[]> {
-  // Parse billing month to get date range
   const [year, month] = billingMonth.split('-').map(Number);
   const startOfMonth = new Date(Date.UTC(year, month - 1, 1));
-  const endOfMonth = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)); // Last day of month
+  const endOfMonth = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
 
-  // Load active credits that overlap with billing month
   const credits = await prisma.credit.findMany({
     where: {
       customerId,
       status: CreditStatus.ACTIVE,
       remainingAmount: { gt: 0 },
-      // Credit validity overlaps with billing month:
-      // validFrom <= endOfMonth AND validTo >= startOfMonth
       validFrom: { lte: endOfMonth },
       validTo: { gte: startOfMonth },
     },
     orderBy: { validFrom: 'asc' },
   });
 
-  // Filter credits where allowCarryOver=false must have validFrom in billing month
-  return credits.filter((credit) => {
-    if (credit.allowCarryOver) {
-      // Carry-over allowed, credit can be used in any overlapping month
-      return true;
-    }
-
-    // allowCarryOver=false: credit validFrom must be within billing month
-    // This restricts the credit to only be used in its starting month
-    return credit.validFrom >= startOfMonth && credit.validFrom <= endOfMonth;
-  });
+  return credits
+    .filter((credit) => {
+      if (credit.allowCarryOver) return true;
+      return credit.validFrom >= startOfMonth && credit.validFrom <= endOfMonth;
+    })
+    .map((credit) => ({
+      id: credit.id,
+      types: credit.types,
+      totalAmount: credit.totalAmount,
+      remainingAmount: credit.remainingAmount,
+      currency: credit.currency,
+      validFrom: credit.validFrom,
+      validTo: credit.validTo,
+      allowCarryOver: credit.allowCarryOver,
+      status: credit.status,
+      billingAccountId: credit.billingAccountId,
+      matchSkuId: credit.matchSkuId,
+      matchSkuGroupId: credit.matchSkuGroupId,
+      matchProjectId: credit.matchProjectId,
+    }));
 }
 
 /**
- * Apply credits to an invoice amount.
+ * True iff the entry satisfies every set filter on the credit.
+ * Null filters match anything.
+ */
+function entryMatchesCredit(entry: PricedCostEntry, credit: CreditForApplication): boolean {
+  if (credit.matchSkuId != null && entry.skuId !== credit.matchSkuId) return false;
+  if (credit.matchSkuGroupId != null && entry.skuGroupId !== credit.matchSkuGroupId) return false;
+  if (credit.matchProjectId != null && entry.projectId !== credit.matchProjectId) return false;
+  return true;
+}
+
+function creditHasFilters(credit: CreditForApplication): boolean {
+  return credit.matchSkuId != null || credit.matchSkuGroupId != null || credit.matchProjectId != null;
+}
+
+function computeMatchedPool(
+  credit: CreditForApplication,
+  pricedEntries: PricedCostEntry[] | undefined
+): Prisma.Decimal | null {
+  if (!creditHasFilters(credit)) return null; // null = unrestricted
+  if (!pricedEntries) return null; // legacy caller — fall back to unrestricted
+  let sum = new Prisma.Decimal(0);
+  for (const entry of pricedEntries) {
+    if (entryMatchesCredit(entry, credit)) sum = sum.add(entry.cost);
+  }
+  return sum;
+}
+
+/**
+ * Apply credits to an invoice amount, honoring each credit's optional
+ * SKU / SKU group / project filters.
  *
- * Credits are applied in validFrom ASC order (oldest first).
- * Each credit reduces the invoice amount until either:
- * - Invoice amount reaches 0
- * - All applicable credits are exhausted
- *
- * @param customerId Customer ID
- * @param invoiceId Invoice ID (for ledger tracking)
- * @param invoiceRunId Invoice run ID (for ledger tracking)
- * @param invoiceAmount Amount before credits
- * @param billingMonth YYYY-MM format
- * @returns Credit application result
+ * @param customerId       Customer ID
+ * @param invoiceId        Invoice ID (for ledger tracking)
+ * @param invoiceRunId     Invoice run ID (for ledger tracking)
+ * @param invoiceAmount    Total invoice amount before credits
+ * @param billingMonth     YYYY-MM
+ * @param pricedEntries    Optional. Priced cost entries with skuId / skuGroupId
+ *                         / projectId so filter-bearing credits can compute
+ *                         their matched pool. If omitted, filters are ignored
+ *                         and behavior matches the pre-3.3.1 engine.
  */
 export async function applyCreditsToInvoice(
   customerId: string,
   invoiceId: string,
   invoiceRunId: string,
   invoiceAmount: Prisma.Decimal,
-  billingMonth: string
+  billingMonth: string,
+  pricedEntries?: PricedCostEntry[]
 ): Promise<CreditApplicationResult> {
-  // Load applicable credits
   const credits = await loadApplicableCredits(customerId, billingMonth);
 
-  // If no credits or invoice is already 0, return early
   if (credits.length === 0 || invoiceAmount.lte(0)) {
     return {
       totalCreditsApplied: new Prisma.Decimal(0),
@@ -149,25 +185,28 @@ export async function applyCreditsToInvoice(
   let remainingInvoiceAmount = invoiceAmount;
   let totalCreditsApplied = new Prisma.Decimal(0);
 
-  // Apply each credit in order
   for (const credit of credits) {
-    if (remainingInvoiceAmount.lte(0)) {
-      break; // Invoice fully covered
-    }
+    if (remainingInvoiceAmount.lte(0)) break;
 
-    // Calculate how much of this credit to apply
+    const matchedPool = computeMatchedPool(credit, pricedEntries);
+    // If credit has filters but no matching cost, skip.
+    if (matchedPool != null && matchedPool.lte(0)) continue;
+
     const creditRemaining = credit.remainingAmount;
-    const amountToApply = Prisma.Decimal.min(creditRemaining, remainingInvoiceAmount);
-
-    if (amountToApply.lte(0)) {
-      continue; // Skip if nothing to apply
+    // Cap by: credit's remainingAmount, the matched pool (if any), and the
+    // invoice's remaining amount.
+    const caps: Prisma.Decimal[] = [creditRemaining, remainingInvoiceAmount];
+    if (matchedPool != null) caps.push(matchedPool);
+    let amountToApply = caps[0];
+    for (let i = 1; i < caps.length; i++) {
+      amountToApply = Prisma.Decimal.min(amountToApply, caps[i]);
     }
+
+    if (amountToApply.lte(0)) continue;
 
     const creditRemainingAfter = creditRemaining.sub(amountToApply);
 
-    // Create ledger entry and update credit atomically
     await prisma.$transaction(async (tx) => {
-      // Create ledger entry
       await tx.creditLedger.create({
         data: {
           creditId: credit.id,
@@ -177,10 +216,7 @@ export async function applyCreditsToInvoice(
           creditRemainingBefore: creditRemaining,
         },
       });
-
-      // Update credit remaining amount
       const newStatus = creditRemainingAfter.lte(0) ? CreditStatus.DEPLETED : credit.status;
-
       await tx.credit.update({
         where: { id: credit.id },
         data: {
@@ -190,13 +226,13 @@ export async function applyCreditsToInvoice(
       });
     });
 
-    // Track application
     creditsUsed.push({
       creditId: credit.id,
-      creditType: credit.type,
+      creditTypes: credit.types,
       appliedAmount: amountToApply,
       creditRemainingBefore: creditRemaining,
       creditRemainingAfter,
+      matchedPool,
     });
 
     remainingInvoiceAmount = remainingInvoiceAmount.sub(amountToApply);
@@ -212,37 +248,27 @@ export async function applyCreditsToInvoice(
 
 /**
  * Capture credit config snapshot for reproducibility.
- *
- * Stores the state of all applicable credits before they are applied,
- * allowing future audit and replay of the billing run.
- *
- * @param customerId Customer ID
- * @param billingMonth YYYY-MM format
- * @returns Array of credit snapshots
  */
 export async function captureCreditConfigSnapshot(
   customerId: string,
   billingMonth: string
 ): Promise<CreditConfigSnapshot[]> {
   const credits = await loadApplicableCredits(customerId, billingMonth);
-
   return credits.map((credit) => ({
     creditId: credit.id,
-    type: credit.type,
+    types: credit.types,
     remainingAmountBefore: credit.remainingAmount.toString(),
     validFrom: credit.validFrom.toISOString().split('T')[0],
     validTo: credit.validTo.toISOString().split('T')[0],
     allowCarryOver: credit.allowCarryOver,
+    matchSkuId: credit.matchSkuId,
+    matchSkuGroupId: credit.matchSkuGroupId,
+    matchProjectId: credit.matchProjectId,
   }));
 }
 
 /**
  * Get credit summary for a customer.
- *
- * Returns aggregated information about available credits.
- *
- * @param customerId Customer ID
- * @returns Credit summary
  */
 export async function getCustomerCreditSummary(customerId: string): Promise<{
   totalActiveCredits: number;
@@ -262,17 +288,18 @@ export async function getCustomerCreditSummary(customerId: string): Promise<{
 
   for (const credit of credits) {
     totalRemainingAmount = totalRemainingAmount.add(credit.remainingAmount);
-
-    if (!creditsByType[credit.type]) {
-      creditsByType[credit.type] = { count: 0, remainingAmount: new Prisma.Decimal(0) };
+    // A credit with N types contributes to each of those buckets. Counting
+    // remainingAmount on every bucket would double-count totals, so we only
+    // count membership here and use totalRemainingAmount for the global total.
+    for (const t of credit.types) {
+      if (!creditsByType[t]) {
+        creditsByType[t] = { count: 0, remainingAmount: new Prisma.Decimal(0) };
+      }
+      creditsByType[t].count++;
+      creditsByType[t].remainingAmount = creditsByType[t].remainingAmount.add(credit.remainingAmount);
     }
-    creditsByType[credit.type].count++;
-    creditsByType[credit.type].remainingAmount = creditsByType[credit.type].remainingAmount.add(
-      credit.remainingAmount
-    );
   }
 
-  // Convert to string format for output
   const creditsByTypeOutput: Record<string, { count: number; remainingAmount: string }> = {};
   for (const [type, data] of Object.entries(creditsByType)) {
     creditsByTypeOutput[type] = {
