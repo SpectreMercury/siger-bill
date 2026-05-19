@@ -260,7 +260,15 @@
     },
     "modal": {
       "createTitle": "New Customer",
-      "editTitle": "Edit Customer"
+      "editTitle": "Edit Customer",
+      "title": "Manage projects · {name}",
+      "searchPlaceholder": "Search by project ID or name...",
+      "selected": "Selected ({count})",
+      "empty": "No projects bound yet",
+      "noResults": "No projects found",
+      "saveChanges": "Save changes",
+      "loadFailed": "Failed to load bindings",
+      "saveFailed": "Failed to save changes"
     },
     "projectIds": "GCP Project IDs",
     "projectIdsPlaceholder": "Enter GCP project IDs, separated by comma or newline\ne.g. my-project-1, my-project-2",
@@ -279,7 +287,9 @@
     "gcpConnection": "GCP Connection",
     "gcpConnectionPlaceholder": "Select a GCP connection",
     "gcpConnectionNone": "None (use global default)",
-    "gcpConnectionHint": "When set, all GCP API calls for this customer (billing accounts, project info) will use this connection"
+    "gcpConnectionHint": "When set, all GCP API calls for this customer (billing accounts, project info) will use this connection",
+    "projects": "Projects",
+    "manageProjects": "Manage projects"
   },
   "users": {
     "title": "Users",
@@ -626,7 +636,7 @@
   },
   "projectBillingConfigs": {
     "title": "Project Billing Configs",
-    "subtitle": "Per (project ID × customer) configuration of whether this project is billable for that customer.",
+    "subtitle": "Project registry. Each row is a GCP project this reseller manages, with its display name, billable flag, and billing account.",
     "projectId": "Project ID",
     "customer": "Customer",
     "billable": "Billable",
@@ -640,15 +650,26 @@
     "loadFailed": "Load failed",
     "saveFailed": "Save failed",
     "deleteFailed": "Delete failed",
-    "actions": { "create": "New Config" },
-    "placeholders": { "projectId": "e.g. my-prod-project-001" },
-    "hints": { "projectId": "Raw GCP project ID string; does not need to be registered under Projects." },
+    "actions": {
+      "create": "New Config"
+    },
+    "placeholders": {
+      "projectId": "e.g. my-prod-project-001",
+      "name": "Select project name",
+      "billingAccount": "Select billing account (optional)"
+    },
+    "hints": {
+      "projectId": "Raw GCP project ID string; does not need to be registered under Projects.",
+      "nameOptionsTodo": "TODO: project name options list is empty. Edit src/lib/constants/project-names.ts to populate the dropdown."
+    },
     "modal": {
       "createTitle": "New Project Billing Config",
       "editTitle": "Edit Project Billing Config",
       "deleteTitle": "Delete Config",
-      "deleteConfirm": "Delete the billing config for project \"{projectId}\" under customer \"{customer}\"?"
-    }
+      "deleteConfirm": "Delete the registry row for project \"{projectId}\"? (Fails if any customer is still bound to it.)"
+    },
+    "name": "Name",
+    "billingAccount": "Billing account"
   },
   "credits": {
     "title": "Credits",
@@ -1173,5 +1194,20 @@
     "billingConfigDesc": "Enable automatic billing data fetching from BigQuery",
     "billingConfigured": "Configured",
     "billingNotConfigured": "Not Configured"
+  },
+  "customerProjects": {
+    "heading": "Bound projects",
+    "manage": "Manage projects",
+    "projectId": "Project ID",
+    "billable": "Billable",
+    "billableYes": "Billable",
+    "billableNo": "Not billable",
+    "billingAccount": "Billing account",
+    "startDate": "Bound at",
+    "unbind": "Unbind",
+    "empty": "No projects bound to this customer",
+    "confirmUnbind": "Unbind project \"{projectId}\" from this customer?",
+    "loadFailed": "Failed to load bindings",
+    "unbindFailed": "Failed to unbind project"
   }
 }

@@ -10,7 +10,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { withPermission } from '@/lib/middleware';
-import { getProjectIdsForUserScope, hasCustomerScope, getCustomerScopes } from '@/lib/auth/context';
+import { getProjectIdsForUserScope, hasCustomerScope } from '@/lib/auth/context';
 import { rawCostQuerySchema, success, serverError, forbidden } from '@/lib/utils';
 
 /**
@@ -79,11 +79,9 @@ export const GET = withPermission(
             customerId: query.customerId,
             isActive: true,
           },
-          include: {
-            project: { select: { projectId: true } },
-          },
+          select: { projectId: true },
         });
-        const projectIds = customerProjects.map((cp) => cp.project.projectId);
+        const projectIds = customerProjects.map((cp) => cp.projectId);
 
         if (projectIds.length === 0) {
           // Customer has no bound projects

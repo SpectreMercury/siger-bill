@@ -36,20 +36,6 @@ export const GET = withPermission(
         where: { id },
         include: {
           projects: {
-            include: {
-              customerProjects: {
-                where: { isActive: true },
-                include: {
-                  customer: {
-                    select: {
-                      id: true,
-                      name: true,
-                      externalId: true,
-                    },
-                  },
-                },
-              },
-            },
             orderBy: { projectId: 'asc' },
           },
         },
@@ -59,7 +45,26 @@ export const GET = withPermission(
         return notFound('Billing account not found');
       }
 
-      // Transform to include customer info
+      // Project no longer carries customerProjects directly. Fetch all bindings
+      // for projects under this billing account in a single batched query, then
+      // attach to each project. Two queries total, no N+1.
+      const projectIdStrings = billingAccount.projects.map((p) => p.projectId);
+      const bindings = projectIdStrings.length === 0
+        ? []
+        : await prisma.customerProject.findMany({
+            where: { projectId: { in: projectIdStrings }, isActive: true },
+            select: {
+              projectId: true,
+              customer: { select: { id: true, name: true, externalId: true } },
+            },
+          });
+      const bindingsByProject = new Map<string, typeof bindings>();
+      for (const b of bindings) {
+        const arr = bindingsByProject.get(b.projectId) ?? [];
+        arr.push(b);
+        bindingsByProject.set(b.projectId, arr);
+      }
+
       const data = {
         id: billingAccount.id,
         billingAccountId: billingAccount.billingAccountId,
@@ -72,7 +77,7 @@ export const GET = withPermission(
           projectId: project.projectId,
           name: project.name,
           status: project.status,
-          customers: project.customerProjects.map((cp) => ({
+          customers: (bindingsByProject.get(project.projectId) ?? []).map((cp) => ({
             id: cp.customer.id,
             name: cp.customer.name,
             externalId: cp.customer.externalId,

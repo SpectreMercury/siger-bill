@@ -260,7 +260,15 @@
     },
     "modal": {
       "createTitle": "新建客户",
-      "editTitle": "编辑客户"
+      "editTitle": "编辑客户",
+      "title": "管理项目 · {name}",
+      "searchPlaceholder": "按项目 ID 或名称搜索...",
+      "selected": "已选 ({count})",
+      "empty": "尚未绑定项目",
+      "noResults": "未找到项目",
+      "saveChanges": "保存更改",
+      "loadFailed": "加载绑定失败",
+      "saveFailed": "保存失败"
     },
     "projectIds": "GCP 项目 ID",
     "projectIdsPlaceholder": "输入 GCP 项目 ID，多个用逗号或换行分隔\n如：my-project-1, my-project-2",
@@ -279,7 +287,9 @@
     "gcpConnection": "GCP 连接",
     "gcpConnectionPlaceholder": "选择 GCP 连接",
     "gcpConnectionNone": "不绑定（使用全局默认）",
-    "gcpConnectionHint": "绑定后，该客户的所有 GCP API 调用（账单账户查询、项目信息同步）都将使用此连接"
+    "gcpConnectionHint": "绑定后，该客户的所有 GCP API 调用（账单账户查询、项目信息同步）都将使用此连接",
+    "projects": "项目",
+    "manageProjects": "管理项目"
   },
   "users": {
     "title": "用户",
@@ -626,7 +636,7 @@
   },
   "projectBillingConfigs": {
     "title": "Project 计费配置",
-    "subtitle": "按 (project ID × 客户) 维度配置该项目是否对该客户收费",
+    "subtitle": "项目户口本。每行对应一个本系统管理的 GCP 项目，含展示名、是否计费、所属结算账号。",
     "projectId": "Project ID",
     "customer": "关联客户",
     "billable": "是否收费",
@@ -640,15 +650,26 @@
     "loadFailed": "加载失败",
     "saveFailed": "保存失败",
     "deleteFailed": "删除失败",
-    "actions": { "create": "新增配置" },
-    "placeholders": { "projectId": "例如 my-prod-project-001" },
-    "hints": { "projectId": "原始 GCP project ID 字符串，不必预先注册到系统的 Projects 列表里" },
+    "actions": {
+      "create": "新增配置"
+    },
+    "placeholders": {
+      "projectId": "例如 my-prod-project-001",
+      "name": "选择项目名称",
+      "billingAccount": "选择结算账号（可选）"
+    },
+    "hints": {
+      "projectId": "原始 GCP project ID 字符串，不必预先注册到系统的 Projects 列表里",
+      "nameOptionsTodo": "TODO: 项目名称选项还未配置。编辑 src/lib/constants/project-names.ts 填入候选项。"
+    },
     "modal": {
       "createTitle": "新增 Project 计费配置",
       "editTitle": "编辑 Project 计费配置",
       "deleteTitle": "删除配置",
-      "deleteConfirm": "确定要删除 project「{projectId}」在客户「{customer}」下的计费配置吗？"
-    }
+      "deleteConfirm": "确定要删除项目 \"{projectId}\" 的户口本条目吗？（如果仍有客户绑定它将失败。）"
+    },
+    "name": "名称",
+    "billingAccount": "结算账号"
   },
   "credits": {
     "title": "信用额度",
@@ -1173,5 +1194,20 @@
     "billingConfigDesc": "配置后可自动从 BigQuery 拉取账单数据",
     "billingConfigured": "已配置",
     "billingNotConfigured": "未配置"
+  },
+  "customerProjects": {
+    "heading": "已绑定的项目",
+    "manage": "管理项目",
+    "projectId": "项目 ID",
+    "billable": "计费",
+    "billableYes": "计费",
+    "billableNo": "不计费",
+    "billingAccount": "结算账号",
+    "startDate": "绑定时间",
+    "unbind": "解绑",
+    "empty": "该客户尚未绑定项目",
+    "confirmUnbind": "确定要解除项目 \"{projectId}\" 与该客户的绑定吗？",
+    "loadFailed": "加载绑定失败",
+    "unbindFailed": "解绑失败"
   }
 }

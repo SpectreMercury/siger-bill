@@ -176,7 +176,7 @@ export default function CustomerDetailPage() {
         </TabsList>
 
         <TabsContent value="projects">
-          <CustomerProjectsTab customerId={customerId} />
+          <CustomerProjectsTab customerId={customerId} customerName={customer.name} />
         </TabsContent>
 
         <TabsContent value="pricing">

@@ -1,9 +1,10 @@
 /**
  * /api/project-billing-configs/[id]
  *
- * PUT    - Update an existing config (billable, projectId, customerId).
- *          Sets updatedBy to current user.
- * DELETE - Remove a config.
+ * PUT    - Update an existing registry row (projectId, name, billable,
+ *          billingAccountId). Sets updatedBy to current user.
+ * DELETE - Remove a registry row. Will fail with FK violation if any active
+ *          CustomerProject still references this projectId.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -23,12 +24,13 @@ import {
 
 const updateSchema = z.object({
   projectId: z.string().trim().min(1).max(100).optional(),
-  customerId: z.string().uuid().optional(),
+  name: z.string().trim().max(255).optional().nullable(),
   billable: z.boolean().optional(),
+  billingAccountId: z.string().uuid().optional().nullable(),
 });
 
 const operatorSelect = { id: true, firstName: true, lastName: true, email: true } as const;
-const customerSelect = { id: true, name: true, externalId: true } as const;
+const billingAccountSelect = { id: true, billingAccountId: true, name: true } as const;
 
 export const PUT = withPermission(
   { resource: 'project_billing_configs', action: 'update' },
@@ -41,22 +43,25 @@ export const PUT = withPermission(
       const validation = await validateBody(request, updateSchema);
       if (!validation.success) return validationError(validation.error);
 
+      const data = validation.data;
       const updateData: Prisma.ProjectBillingConfigUpdateInput = {
         updater: { connect: { id: context.auth.userId } },
       };
-      const data = validation.data;
       if (data.projectId !== undefined) updateData.projectId = data.projectId;
-      if (data.customerId !== undefined) {
-        updateData.customer = { connect: { id: data.customerId } };
-      }
+      if (data.name !== undefined) updateData.name = data.name;
       if (data.billable !== undefined) updateData.billable = data.billable;
+      if (data.billingAccountId !== undefined) {
+        updateData.billingAccount = data.billingAccountId === null
+          ? { disconnect: true }
+          : { connect: { id: data.billingAccountId } };
+      }
 
       try {
         const row = await prisma.projectBillingConfig.update({
           where: { id },
           data: updateData,
           include: {
-            customer: { select: customerSelect },
+            billingAccount: { select: billingAccountSelect },
             creator: { select: operatorSelect },
             updater: { select: operatorSelect },
           },
@@ -68,13 +73,15 @@ export const PUT = withPermission(
           id,
           {
             projectId: existing.projectId,
-            customerId: existing.customerId,
+            name: existing.name,
             billable: existing.billable,
+            billingAccountId: existing.billingAccountId,
           },
           {
             projectId: row.projectId,
-            customerId: row.customerId,
+            name: row.name,
             billable: row.billable,
+            billingAccountId: row.billingAccountId,
           }
         );
 
@@ -83,8 +90,9 @@ export const PUT = withPermission(
           config: {
             id: row.id,
             projectId: row.projectId,
+            name: row.name,
             billable: row.billable,
-            customer: row.customer,
+            billingAccount: row.billingAccount,
             createdBy: row.creator,
             updatedBy: row.updater,
             createdAt: row.createdAt,
@@ -93,7 +101,7 @@ export const PUT = withPermission(
         });
       } catch (err) {
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-          return conflict('A config for this (project, customer) pair already exists');
+          return conflict('Another registry row already uses this projectId');
         }
         throw err;
       }
@@ -112,12 +120,22 @@ export const DELETE = withPermission(
       const existing = await prisma.projectBillingConfig.findUnique({ where: { id } });
       if (!existing) return notFound('Config');
 
-      await prisma.projectBillingConfig.delete({ where: { id } });
+      try {
+        await prisma.projectBillingConfig.delete({ where: { id } });
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+          return conflict(
+            `Cannot delete: project '${existing.projectId}' is still bound to one or more customers`
+          );
+        }
+        throw err;
+      }
 
       await logDelete(context, 'project_billing_configs', id, {
         projectId: existing.projectId,
-        customerId: existing.customerId,
+        name: existing.name,
         billable: existing.billable,
+        billingAccountId: existing.billingAccountId,
       });
 
       return success({ deleted: true });

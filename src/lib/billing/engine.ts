@@ -265,14 +265,18 @@ export async function executeInvoiceRun(
       customerFilter.id = options.targetCustomerId;
     }
 
-    // Get all customers with active project bindings
+    // Get all customers with active project bindings.
+    // After the binding refactor, CustomerProject.projectId IS the GCP string
+    // (was UUID FK to Project). No nested project join needed.
     const customers = await prisma.customer.findMany({
       where: customerFilter,
       include: {
         customerProjects: {
           where: { isActive: true },
-          include: {
-            project: true,
+          select: {
+            projectId: true,
+            startDate: true,
+            endDate: true,
           },
         },
       },
@@ -293,7 +297,7 @@ export async function executeInvoiceRun(
           continue;
         }
 
-        const projectIds = activeBindings.map((cp) => cp.project.projectId);
+        const projectIds = activeBindings.map((cp) => cp.projectId);
         projectIds.forEach((p) => allProjectIds.add(p));
 
         // Get all raw cost entries for this customer's projects within source filter

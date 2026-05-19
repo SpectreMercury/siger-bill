@@ -1,11 +1,18 @@
 /**
  * /api/project-billing-configs
  *
- * Per (project_id × customer) billing configuration: stores whether a project
- * is billable for a particular customer, plus operator audit fields.
+ * Project registry endpoints. Each row is a GCP project the reseller manages
+ * (uniquely keyed by GCP projectId string), with business-side metadata:
+ *   - name             (display label; preset options enforced at app layer,
+ *                       see src/lib/constants/project-names.ts)
+ *   - billable         (whether costs from this project roll up to invoices)
+ *   - billingAccountId (FK to billing_accounts.id)
  *
- * GET  - List configs (filter by customerId / projectId, paginated)
- * POST - Create a new config
+ * Customer ↔ project binding is NOT stored here — see CustomerProject /
+ * /api/customers/[id]/projects.
+ *
+ * GET  - List projects (?search=, ?billingAccountId=, paginated)
+ * POST - Create a new project registry row
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -21,33 +28,37 @@ import {
   created,
   serverError,
   conflict,
-  notFound,
 } from '@/lib/utils';
 
 const createSchema = z.object({
   projectId: z.string().trim().min(1).max(100),
-  customerId: z.string().uuid(),
+  name: z.string().trim().max(255).optional().nullable(),
   billable: z.boolean().default(true),
+  billingAccountId: z.string().uuid().optional().nullable(),
 });
 
 const operatorSelect = { id: true, firstName: true, lastName: true, email: true } as const;
-const customerSelect = { id: true, name: true, externalId: true } as const;
+const billingAccountSelect = { id: true, billingAccountId: true, name: true } as const;
 
-function mapConfig(c: {
+type ConfigRow = {
   id: string;
   projectId: string;
+  name: string | null;
   billable: boolean;
+  billingAccount: { id: string; billingAccountId: string; name: string | null } | null;
   createdAt: Date;
   updatedAt: Date;
-  customer: { id: string; name: string; externalId: string | null };
   creator: { id: string; firstName: string; lastName: string; email: string } | null;
   updater: { id: string; firstName: string; lastName: string; email: string } | null;
-}) {
+};
+
+function mapConfig(c: ConfigRow) {
   return {
     id: c.id,
     projectId: c.projectId,
+    name: c.name,
     billable: c.billable,
-    customer: c.customer,
+    billingAccount: c.billingAccount,
     createdBy: c.creator,
     updatedBy: c.updater,
     createdAt: c.createdAt,
@@ -69,15 +80,15 @@ export const GET = withPermission(
       const skip = (page - 1) * limit;
 
       const where: Record<string, unknown> = {};
-      const customerId = searchParams.get('customerId');
       const projectId = searchParams.get('projectId');
+      const billingAccountId = searchParams.get('billingAccountId');
       const search = searchParams.get('search');
-      if (customerId) where.customerId = customerId;
       if (projectId) where.projectId = projectId;
+      if (billingAccountId) where.billingAccountId = billingAccountId;
       if (search) {
         where.OR = [
           { projectId: { contains: search, mode: 'insensitive' } },
-          { customer: { name: { contains: search, mode: 'insensitive' } } },
+          { name: { contains: search, mode: 'insensitive' } },
         ];
       }
 
@@ -88,7 +99,7 @@ export const GET = withPermission(
           take: limit,
           orderBy: { updatedAt: 'desc' },
           include: {
-            customer: { select: customerSelect },
+            billingAccount: { select: billingAccountSelect },
             creator: { select: operatorSelect },
             updater: { select: operatorSelect },
           },
@@ -113,31 +124,29 @@ export const POST = withPermission(
     try {
       const validation = await validateBody(request, createSchema);
       if (!validation.success) return validationError(validation.error);
-      const { projectId, customerId, billable } = validation.data;
-
-      const customer = await prisma.customer.findUnique({ where: { id: customerId } });
-      if (!customer) return notFound('Customer');
+      const { projectId, name, billable, billingAccountId } = validation.data;
 
       const existing = await prisma.projectBillingConfig.findUnique({
-        where: { projectId_customerId: { projectId, customerId } },
+        where: { projectId },
+        select: { id: true },
       });
       if (existing) {
-        return conflict(
-          `Config already exists for project "${projectId}" and this customer`,
-          { existingId: existing.id }
-        );
+        return conflict(`Project '${projectId}' is already in the registry`, {
+          existingId: existing.id,
+        });
       }
 
       const row = await prisma.projectBillingConfig.create({
         data: {
           projectId,
-          customerId,
+          name: name ?? null,
           billable,
+          billingAccountId: billingAccountId ?? null,
           createdBy: context.auth.userId,
           updatedBy: context.auth.userId,
         },
         include: {
-          customer: { select: customerSelect },
+          billingAccount: { select: billingAccountSelect },
           creator: { select: operatorSelect },
           updater: { select: operatorSelect },
         },
@@ -145,12 +154,12 @@ export const POST = withPermission(
 
       await logCreate(context, 'project_billing_configs', row.id, {
         projectId,
-        customerId,
-        customerName: customer.name,
+        name,
         billable,
+        billingAccountId,
       });
 
-      return created({ message: 'Config created', config: mapConfig(row) });
+      return created({ message: 'Project registered', config: mapConfig(row) });
     } catch (error) {
       console.error('Failed to create project billing config:', error);
       return serverError('Failed to create config');

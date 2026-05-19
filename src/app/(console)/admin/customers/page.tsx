@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/shadcn/button';
 import { Card } from '@/components/ui/shadcn/card';
 import { Input } from '@/components/ui/shadcn/input';
 import { Label } from '@/components/ui/shadcn/label';
+import { Badge } from '@/components/ui/shadcn/badge';
 import {
   Select,
   SelectContent,
@@ -19,10 +20,12 @@ import {
   SelectValue,
 } from '@/components/ui/shadcn/select';
 import { Modal } from '@/components/ui/Modal';
-import { Textarea } from '@/components/ui/shadcn/textarea';
 import { Can } from '@/components/auth';
-import { Plus, ExternalLink, Cloud } from 'lucide-react';
+import { ManageProjectsDrawer } from '@/components/admin/ManageProjectsDrawer';
+import { Plus, ExternalLink, Cloud, FolderTree } from 'lucide-react';
 import Link from 'next/link';
+
+const CHIP_CAP = 3;
 
 interface GcpConnectionOption {
   id: string;
@@ -39,7 +42,6 @@ interface CustomerFormData {
   primaryContactEmail: string;
   status: 'ACTIVE' | 'SUSPENDED' | 'TERMINATED';
   gcpConnectionId: string | null;
-  projectIds: string;
 }
 
 export default function CustomersPage() {
@@ -60,9 +62,11 @@ export default function CustomersPage() {
     primaryContactEmail: '',
     status: 'ACTIVE',
     gcpConnectionId: null,
-    projectIds: '',
   });
   const [isSaving, setIsSaving] = useState(false);
+
+  // Manage projects drawer state
+  const [drawerCustomer, setDrawerCustomer] = useState<{ id: string; name: string } | null>(null);
 
   // GCP connection options (super admin only)
   const [gcpConnections, setGcpConnections] = useState<GcpConnectionOption[]>([]);
@@ -81,7 +85,6 @@ export default function CustomersPage() {
     }
   }, []);
 
-  // Load GCP connections for the dropdown (super admin only)
   const fetchGcpConnections = useCallback(async () => {
     if (!isSuperAdmin) return;
     try {
@@ -108,6 +111,54 @@ export default function CustomersPage() {
             <div className="text-xs text-muted-foreground">{row.original.externalId}</div>
           </Link>
         ),
+      },
+      {
+        id: 'projects',
+        header: t('projects'),
+        cell: ({ row }) => {
+          const projects = row.original.projects ?? [];
+          const count = row.original.projectsCount ?? projects.length;
+          if (count === 0) {
+            return <span className="text-muted-foreground text-sm">—</span>;
+          }
+          const visible = projects.slice(0, CHIP_CAP);
+          const overflow = count - visible.length;
+          return (
+            <div className="flex items-center gap-1 flex-wrap max-w-[280px]">
+              {visible.map((p) => (
+                <Link
+                  key={p.projectId}
+                  href={`/admin/project-billing-configs?search=${encodeURIComponent(p.projectId)}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Badge
+                    variant="outline"
+                    className={`font-mono text-xs max-w-[140px] truncate hover:bg-muted ${
+                      !p.billable ? 'opacity-60' : ''
+                    }`}
+                    title={p.name ? `${p.projectId} · ${p.name}` : p.projectId}
+                  >
+                    {p.projectId}
+                  </Badge>
+                </Link>
+              ))}
+              {overflow > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDrawerCustomer({ id: row.original.id, name: row.original.name });
+                  }}
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                >
+                  <Badge variant="secondary" className="text-xs">
+                    +{overflow}
+                  </Badge>
+                </button>
+              )}
+            </div>
+          );
+        },
       },
       {
         accessorKey: 'currency',
@@ -147,6 +198,17 @@ export default function CustomersPage() {
         header: '',
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
+            <Can resource="customer_projects" action="bind">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setDrawerCustomer({ id: row.original.id, name: row.original.name })}
+                title={t('manageProjects')}
+              >
+                <FolderTree className="h-4 w-4 mr-1" />
+                {t('manageProjects')}
+              </Button>
+            </Can>
             <Can resource="customers" action="update">
               <Button variant="ghost" size="sm" onClick={() => handleEdit(row.original)}>
                 {tc('edit')}
@@ -175,7 +237,6 @@ export default function CustomersPage() {
       primaryContactEmail: customer.primaryContactEmail || '',
       status: customer.status,
       gcpConnectionId: customer.gcpConnectionId ?? null,
-      projectIds: '',
     });
     setShowCreateModal(true);
   };
@@ -190,7 +251,6 @@ export default function CustomersPage() {
       primaryContactEmail: '',
       status: 'ACTIVE',
       gcpConnectionId: null,
-      projectIds: '',
     });
     setShowCreateModal(true);
   };
@@ -198,14 +258,9 @@ export default function CustomersPage() {
   const handleSubmit = async () => {
     setIsSaving(true);
     try {
-      const projectIdsArray = formData.projectIds
-        ? formData.projectIds.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
-        : [];
-
       const payload = {
         ...formData,
         gcpConnectionId: formData.gcpConnectionId || null,
-        projectIds: projectIdsArray.length > 0 ? projectIdsArray : undefined,
       };
       if (editingCustomer) {
         await api.put(`/customers/${editingCustomer.id}`, payload);
@@ -222,7 +277,6 @@ export default function CustomersPage() {
     }
   };
 
-  // Group GCP connections by group for the select
   const gcpConnectionGroups = useMemo(() => {
     const groups: Record<string, GcpConnectionOption[]> = {};
     for (const c of gcpConnections) {
@@ -250,7 +304,6 @@ export default function CustomersPage() {
 
       {error && <Alert variant="error" onClose={() => setError(null)}>{error}</Alert>}
 
-      {/* Table */}
       <Card>
         <DataTable
           data={customers}
@@ -279,20 +332,6 @@ export default function CustomersPage() {
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               required
             />
-          </div>
-
-          {/* GCP Project IDs — the most important field for resellers */}
-          <div className="space-y-2">
-            <Label htmlFor="projectIds">{t('projectIds')}</Label>
-            <Textarea
-              id="projectIds"
-              value={formData.projectIds}
-              onChange={(e) => setFormData({ ...formData, projectIds: e.target.value })}
-              placeholder={t('projectIdsPlaceholder')}
-              rows={2}
-              className="font-mono text-sm"
-            />
-            <p className="text-xs text-muted-foreground">{t('projectIdsHint')}</p>
           </div>
 
           <div className="space-y-2">
@@ -342,7 +381,6 @@ export default function CustomersPage() {
             />
           </div>
 
-          {/* GCP Connection — super admin only */}
           {isSuperAdmin && (
             <div className="space-y-2">
               <Label htmlFor="gcpConnection" className="flex items-center gap-1">
@@ -399,6 +437,15 @@ export default function CustomersPage() {
           </div>
         </form>
       </Modal>
+
+      {/* Manage projects drawer */}
+      <ManageProjectsDrawer
+        customerId={drawerCustomer?.id ?? null}
+        customerName={drawerCustomer?.name ?? ''}
+        open={drawerCustomer !== null}
+        onClose={() => setDrawerCustomer(null)}
+        onSaved={fetchCustomers}
+      />
     </div>
   );
 }

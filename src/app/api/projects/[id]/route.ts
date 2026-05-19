@@ -48,23 +48,22 @@ export const GET = withPermission(
               name: true,
             },
           },
-          customerProjects: {
-            where: { isActive: true },
-            include: {
-              customer: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-            },
-          },
         },
       });
 
       if (!project) {
         return notFound('Project not found');
       }
+
+      // CustomerProject now references the GCP project string, not Project.id
+      const bindings = await prisma.customerProject.findMany({
+        where: { projectId: project.projectId, isActive: true },
+        select: {
+          startDate: true,
+          endDate: true,
+          customer: { select: { id: true, name: true } },
+        },
+      });
 
       return success({
         id: project.id,
@@ -79,7 +78,7 @@ export const GET = withPermission(
               name: project.billingAccount.name,
             }
           : null,
-        boundCustomers: project.customerProjects.map((cp) => ({
+        boundCustomers: bindings.map((cp) => ({
           customerId: cp.customer.id,
           customerName: cp.customer.name,
           startDate: cp.startDate,
@@ -199,19 +198,19 @@ export const DELETE = withPermission(
       // Check project exists
       const existing = await prisma.project.findUnique({
         where: { id },
-        include: {
-          customerProjects: {
-            where: { isActive: true },
-          },
-        },
       });
 
       if (!existing) {
         return notFound('Project not found');
       }
 
-      // Check if project has active customer bindings
-      if (existing.customerProjects.length > 0) {
+      // Check if project has active customer bindings (lookup by GCP string)
+      const activeBinding = await prisma.customerProject.findFirst({
+        where: { projectId: existing.projectId, isActive: true },
+        select: { id: true },
+      });
+
+      if (activeBinding) {
         return badRequest('Cannot delete project with active customer bindings');
       }
 

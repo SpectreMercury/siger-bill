@@ -1,10 +1,18 @@
 'use client';
 
+/**
+ * /admin/project-billing-configs
+ *
+ * Project registry — one row per GCP project the reseller manages.
+ * After the binding refactor this page is decoupled from customers entirely;
+ * customer ↔ project binding lives in the customer detail page / list drawer.
+ */
+
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { ColumnDef } from '@tanstack/react-table';
 import { api } from '@/lib/client/api';
-import { Customer, PaginatedResponse } from '@/lib/client/types';
+import { PaginatedResponse } from '@/lib/client/types';
 import { DataTable, Alert } from '@/components/ui';
 import { Card } from '@/components/ui/shadcn/card';
 import { Badge } from '@/components/ui/shadcn/badge';
@@ -21,6 +29,10 @@ import {
 import { Modal } from '@/components/ui/Modal';
 import { Can } from '@/components/auth';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
+import {
+  PROJECT_NAME_OPTIONS,
+  HAS_PROJECT_NAME_OPTIONS,
+} from '@/lib/constants/project-names';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,11 +45,18 @@ interface Operator {
   email: string;
 }
 
+interface BillingAccountOption {
+  id: string;
+  billingAccountId: string;
+  name: string | null;
+}
+
 interface ProjectBillingConfig {
   id: string;
   projectId: string;
+  name: string | null;
   billable: boolean;
-  customer: { id: string; name: string; externalId: string | null };
+  billingAccount: BillingAccountOption | null;
   createdBy: Operator | null;
   updatedBy: Operator | null;
   createdAt: string;
@@ -46,11 +65,12 @@ interface ProjectBillingConfig {
 
 interface FormData {
   projectId: string;
-  customerId: string;
+  name: string;
   billable: boolean;
+  billingAccountId: string;
 }
 
-const emptyForm = (): FormData => ({ projectId: '', customerId: '', billable: true });
+const emptyForm = (): FormData => ({ projectId: '', name: '', billable: true, billingAccountId: '' });
 
 function operatorLabel(op: Operator | null): string {
   if (!op) return '—';
@@ -67,7 +87,7 @@ export default function ProjectBillingConfigsPage() {
   const tc = useTranslations('common');
 
   const [configs, setConfigs] = useState<ProjectBillingConfig[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [billingAccounts, setBillingAccounts] = useState<BillingAccountOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,12 +104,12 @@ export default function ProjectBillingConfigsPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const [configsRes, customersRes] = await Promise.all([
+      const [configsRes, baRes] = await Promise.all([
         api.get<PaginatedResponse<ProjectBillingConfig>>('/project-billing-configs?limit=200'),
-        api.get<PaginatedResponse<Customer>>('/customers?limit=200'),
+        api.get<PaginatedResponse<BillingAccountOption>>('/billing-accounts?limit=200'),
       ]);
       setConfigs(configsRes.data || []);
-      setCustomers(customersRes.data || []);
+      setBillingAccounts(baRes.data || []);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : t('loadFailed'));
@@ -114,16 +134,9 @@ export default function ProjectBillingConfigsPage() {
         ),
       },
       {
-        accessorKey: 'customer',
-        header: t('customer'),
-        cell: ({ row }) => (
-          <div>
-            <div className="font-medium text-sm">{row.original.customer.name}</div>
-            {row.original.customer.externalId && (
-              <div className="text-xs text-muted-foreground">{row.original.customer.externalId}</div>
-            )}
-          </div>
-        ),
+        accessorKey: 'name',
+        header: t('name'),
+        cell: ({ row }) => row.original.name || <span className="text-muted-foreground">—</span>,
       },
       {
         accessorKey: 'billable',
@@ -136,16 +149,12 @@ export default function ProjectBillingConfigsPage() {
           ),
       },
       {
-        accessorKey: 'createdAt',
-        header: t('createdAt'),
-        cell: ({ row }) => (
-          <div className="text-xs">
-            <div>{new Date(row.original.createdAt).toLocaleString()}</div>
-            <div className="text-muted-foreground">
-              {t('by')}: {operatorLabel(row.original.createdBy)}
-            </div>
-          </div>
-        ),
+        accessorKey: 'billingAccount',
+        header: t('billingAccount'),
+        cell: ({ row }) =>
+          row.original.billingAccount?.name ||
+          row.original.billingAccount?.billingAccountId ||
+          <span className="text-muted-foreground">—</span>,
       },
       {
         accessorKey: 'updatedAt',
@@ -198,8 +207,9 @@ export default function ProjectBillingConfigsPage() {
     setEditing(row);
     setFormData({
       projectId: row.projectId,
-      customerId: row.customer.id,
+      name: row.name ?? '',
       billable: row.billable,
+      billingAccountId: row.billingAccount?.id ?? '',
     });
     setShowModal(true);
   };
@@ -213,10 +223,16 @@ export default function ProjectBillingConfigsPage() {
     setIsSaving(true);
     setError(null);
     try {
+      const payload = {
+        projectId: formData.projectId.trim(),
+        name: formData.name.trim() || null,
+        billable: formData.billable,
+        billingAccountId: formData.billingAccountId || null,
+      };
       if (editing) {
-        await api.put(`/project-billing-configs/${editing.id}`, formData);
+        await api.put(`/project-billing-configs/${editing.id}`, payload);
       } else {
-        await api.post('/project-billing-configs', formData);
+        await api.post('/project-billing-configs', payload);
       }
       setShowModal(false);
       setEditing(null);
@@ -295,21 +311,56 @@ export default function ProjectBillingConfigsPage() {
               onChange={(e) => setFormData({ ...formData, projectId: e.target.value })}
               placeholder={t('placeholders.projectId')}
               className="font-mono"
+              disabled={editing !== null}
             />
             <p className="text-xs text-muted-foreground">{t('hints.projectId')}</p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="customerId">{t('customer')} *</Label>
+            <Label htmlFor="name">{t('name')}</Label>
+            {HAS_PROJECT_NAME_OPTIONS ? (
+              <Select
+                value={formData.name || 'none'}
+                onValueChange={(v) => setFormData({ ...formData, name: v === 'none' ? '' : v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={t('placeholders.name')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">—</SelectItem>
+                  {PROJECT_NAME_OPTIONS.map((opt) => (
+                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <>
+                <Input
+                  id="name"
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder={t('placeholders.name')}
+                />
+                <p className="text-xs text-amber-600">{t('hints.nameOptionsTodo')}</p>
+              </>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="billingAccount">{t('billingAccount')}</Label>
             <Select
-              value={formData.customerId}
-              onValueChange={(v) => setFormData({ ...formData, customerId: v })}
+              value={formData.billingAccountId || 'none'}
+              onValueChange={(v) => setFormData({ ...formData, billingAccountId: v === 'none' ? '' : v })}
             >
-              <SelectTrigger><SelectValue placeholder={tc('selectCustomer')} /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue placeholder={t('placeholders.billingAccount')} />
+              </SelectTrigger>
               <SelectContent>
-                {customers.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}{c.externalId && ` (${c.externalId})`}
+                <SelectItem value="none">—</SelectItem>
+                {billingAccounts.map((ba) => (
+                  <SelectItem key={ba.id} value={ba.id}>
+                    {ba.name || ba.billingAccountId}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -346,7 +397,7 @@ export default function ProjectBillingConfigsPage() {
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={isSaving || !formData.projectId || !formData.customerId}
+              disabled={isSaving || !formData.projectId}
             >
               {editing ? tc('save') : tc('create')}
             </Button>
@@ -362,7 +413,7 @@ export default function ProjectBillingConfigsPage() {
       >
         <div className="space-y-4">
           <p className="text-muted-foreground">
-            {t('modal.deleteConfirm', { projectId: deleting?.projectId || '', customer: deleting?.customer.name || '' })}
+            {t('modal.deleteConfirm', { projectId: deleting?.projectId || '' })}
           </p>
           <div className="flex justify-end gap-3">
             <Button variant="secondary" onClick={() => { setShowDeleteModal(false); setDeleting(null); }}>

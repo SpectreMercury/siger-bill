@@ -28,6 +28,10 @@ export interface Customer {
   gcpConnectionId: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Chips on the list page: up to 3 most-recent active project bindings. */
+  projects?: Array<{ projectId: string; name: string | null; billable: boolean }>;
+  /** Total active binding count (drives the "+N more" chip). */
+  projectsCount?: number;
 }
 
 export interface Invoice {

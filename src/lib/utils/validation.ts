@@ -147,12 +147,21 @@ export const createProjectSchema = z.object({
 });
 
 /**
- * Customer-project binding schema
+ * Customer-project binding schema (single bind)
  */
 export const bindProjectSchema = z.object({
   projectId: z.string().min(1, 'Project ID is required').max(100),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
+});
+
+/**
+ * Bulk replace customer's project bindings — PUT /api/customers/[id]/projects.
+ * The payload is the new desired set of active project IDs. The handler diffs
+ * against current active bindings and atomically adds/removes.
+ */
+export const bulkSetCustomerProjectsSchema = z.object({
+  projectIds: z.array(z.string().min(1).max(100).trim()),
 });
 
 /**

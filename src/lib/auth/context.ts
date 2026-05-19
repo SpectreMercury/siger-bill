@@ -141,18 +141,18 @@ export async function getProjectIdsForUserScope(auth: AuthContext): Promise<stri
     return [];
   }
 
-  // Get all projects bound to the user's customers
+  // Get all projects bound to the user's customers.
+  // After the binding refactor, customer_projects.project_id IS the GCP string
+  // (was a UUID FK to projects.id). No join needed.
   const customerProjects = await prisma.customerProject.findMany({
     where: {
       customerId: { in: customerIds },
       isActive: true,
     },
-    include: {
-      project: true,
-    },
+    select: { projectId: true },
   });
 
-  return customerProjects.map((cp) => cp.project.projectId);
+  return customerProjects.map((cp) => cp.projectId);
 }
 
 /**
@@ -170,10 +170,11 @@ export async function hasProjectScope(auth: AuthContext, projectId: string): Pro
 
   const binding = await prisma.customerProject.findFirst({
     where: {
-      project: { projectId },
+      projectId,
       customerId: { in: customerIds },
       isActive: true,
     },
+    select: { id: true },
   });
 
   return binding !== null;
@@ -215,12 +216,10 @@ export async function getScopedProjectIds(auth: AuthContext): Promise<string[] |
       customerId: { in: customerIds },
       isActive: true,
     },
-    include: {
-      project: { select: { projectId: true } },
-    },
+    select: { projectId: true },
   });
 
-  return customerProjects.map((cp) => cp.project.projectId);
+  return customerProjects.map((cp) => cp.projectId);
 }
 
 /**

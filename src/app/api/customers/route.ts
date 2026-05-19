@@ -56,7 +56,9 @@ export const GET = withPermission(
         ? { id: scopeFilter.customerId }
         : undefined;
 
-      // Execute queries in parallel
+      // Execute queries in parallel.
+      // chips on the list page: pull the top 3 active bindings per customer
+      // + total active binding count, in a single nested select. No N+1.
       const [customers, total] = await Promise.all([
         prisma.customer.findMany({
           where,
@@ -77,13 +79,40 @@ export const GET = withPermission(
             gcpConnectionId: true,
             createdAt: true,
             updatedAt: true,
+            customerProjects: {
+              where: { isActive: true },
+              take: 3,
+              orderBy: { createdAt: 'desc' },
+              select: {
+                projectId: true,
+                projectBillingConfig: {
+                  select: { name: true, billable: true },
+                },
+              },
+            },
+            _count: {
+              select: {
+                customerProjects: { where: { isActive: true } },
+              },
+            },
           },
         }),
         prisma.customer.count({ where }),
       ]);
 
+      // Flatten chip data for the response shape consumed by the customer list page.
+      const data = customers.map(({ customerProjects, _count, ...rest }) => ({
+        ...rest,
+        projects: customerProjects.map((cp) => ({
+          projectId: cp.projectId,
+          name: cp.projectBillingConfig?.name ?? null,
+          billable: cp.projectBillingConfig?.billable ?? true,
+        })),
+        projectsCount: _count.customerProjects,
+      }));
+
       return success({
-        data: customers,
+        data,
         pagination: {
           page,
           limit,
@@ -127,9 +156,12 @@ export const POST = withPermission(
         }
       }
 
-      // Create customer + auto-bind projects in a transaction
+      // Create customer + auto-bind projects in a transaction.
+      // After the binding refactor: ProjectBillingConfig is the project registry
+      // (auto-create row if a new projectId shows up), CustomerProject is the
+      // binding (FK to PBC.projectId via string). Project (GCP cache) is left
+      // untouched — it gets populated separately by Resource Manager sync.
       const customer = await prisma.$transaction(async (tx) => {
-        // 1. Create the customer
         const newCustomer = await tx.customer.create({
           data: {
             name: data.name,
@@ -144,32 +176,30 @@ export const POST = withPermission(
           },
         });
 
-        // 2. Auto-create projects and bind to customer
-        if (data.projectIds && data.projectIds.length > 0) {
-          for (const projectId of data.projectIds) {
-            // Create project if it doesn't exist
-            let project = await tx.project.findUnique({ where: { projectId } });
-            if (!project) {
-              project = await tx.project.create({
-                data: { projectId, name: projectId },
-              });
-            }
+        const projectIds = data.projectIds ?? [];
+        if (projectIds.length > 0) {
+          // Register projects in PBC if they're not there yet (idempotent).
+          await tx.projectBillingConfig.createMany({
+            data: projectIds.map((projectId) => ({
+              projectId,
+              billable: true,
+              createdBy: context.auth.userId,
+              updatedBy: context.auth.userId,
+            })),
+            skipDuplicates: true,
+          });
 
-            // Bind project to customer (skip if already bound)
-            const existingBinding = await tx.customerProject.findFirst({
-              where: { customerId: newCustomer.id, projectId: project.id },
-            });
-            if (!existingBinding) {
-              await tx.customerProject.create({
-                data: {
-                  customerId: newCustomer.id,
-                  projectId: project.id,
-                  isActive: true,
-                  startDate: new Date(),
-                },
-              });
-            }
-          }
+          // Bind to the new customer. createMany + skipDuplicates handles the
+          // case where a row already exists (it shouldn't, but defensive).
+          await tx.customerProject.createMany({
+            data: projectIds.map((projectId) => ({
+              customerId: newCustomer.id,
+              projectId,
+              isActive: true,
+              startDate: new Date(),
+            })),
+            skipDuplicates: true,
+          });
         }
 
         return newCustomer;

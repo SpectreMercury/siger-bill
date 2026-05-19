@@ -76,10 +76,13 @@ export const GET = withPermission(
         }
       }
 
-      // If unbound=true, filter to projects with no active customer bindings
-      const unboundParam = searchParams.get('unbound');
-      if (unboundParam === 'true') {
-        where.customerProjects = { none: { isActive: true } };
+      // Typeahead search on projectId or GCP-side name
+      const search = searchParams.get('search');
+      if (search) {
+        where.OR = [
+          { projectId: { contains: search, mode: 'insensitive' } },
+          { name: { contains: search, mode: 'insensitive' } },
+        ];
       }
 
       // Execute queries in parallel
@@ -96,24 +99,41 @@ export const GET = withPermission(
                 name: true,
               },
             },
-            customerProjects: {
-              where: { isActive: true },
-              include: {
-                customer: {
-                  select: {
-                    id: true,
-                    name: true,
-                  },
-                },
-              },
-            },
           },
         }),
         prisma.project.count({ where }),
       ]);
 
+      // Project no longer has a direct customerProjects relation (CustomerProject
+      // now references ProjectBillingConfig via the GCP projectId string). Fetch
+      // all bindings for this page in one batched query and attach.
+      const projectIdStrings = projects.map((p) => p.projectId);
+      const bindings = projectIdStrings.length === 0
+        ? []
+        : await prisma.customerProject.findMany({
+            where: { projectId: { in: projectIdStrings }, isActive: true },
+            select: {
+              projectId: true,
+              startDate: true,
+              endDate: true,
+              customer: { select: { id: true, name: true } },
+            },
+          });
+      const bindingsByProject = new Map<string, typeof bindings>();
+      for (const b of bindings) {
+        const arr = bindingsByProject.get(b.projectId) ?? [];
+        arr.push(b);
+        bindingsByProject.set(b.projectId, arr);
+      }
+
+      // unbound=true: keep only projects with no active bindings
+      const unboundParam = searchParams.get('unbound');
+      const filteredProjects = unboundParam === 'true'
+        ? projects.filter((p) => !bindingsByProject.has(p.projectId))
+        : projects;
+
       // Transform response
-      const data = projects.map((p) => ({
+      const data = filteredProjects.map((p) => ({
         id: p.id,
         projectId: p.projectId,
         projectNumber: p.projectNumber,
@@ -126,7 +146,7 @@ export const GET = withPermission(
               name: p.billingAccount.name,
             }
           : null,
-        boundCustomers: p.customerProjects.map((cp) => ({
+        boundCustomers: (bindingsByProject.get(p.projectId) ?? []).map((cp) => ({
           customerId: cp.customer.id,
           customerName: cp.customer.name,
           startDate: cp.startDate,
