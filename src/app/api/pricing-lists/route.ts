@@ -4,7 +4,7 @@
  * Pricing list management endpoints.
  *
  * GET  - List all pricing lists
- * POST - Create a new pricing list
+ * POST - Create a new pricing list (also creates a default rule covering all SKU groups)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -18,13 +18,8 @@ import {
   serverError,
   validationError,
   notFound,
+  createPricingListSchema,
 } from '@/lib/utils';
-import { z } from 'zod';
-
-const createPricingListSchema = z.object({
-  customerId: z.string().uuid(),
-  name: z.string().min(1).max(255),
-});
 
 /**
  * GET /api/pricing-lists
@@ -37,24 +32,17 @@ export const GET = withPermission(
     try {
       const { searchParams } = new URL(request.url);
 
-      // Parse pagination
       const page = parseInt(searchParams.get('page') || '1');
       const limit = parseInt(searchParams.get('limit') || '20');
       const skip = (page - 1) * limit;
 
-      // Filters
       const customerId = searchParams.get('customerId');
       const status = searchParams.get('status') as PricingListStatus | null;
 
       const where: Prisma.PricingListWhereInput = {};
-      if (customerId) {
-        where.customerId = customerId;
-      }
-      if (status && ['ACTIVE', 'INACTIVE'].includes(status)) {
-        where.status = status;
-      }
+      if (customerId) where.customerId = customerId;
+      if (status && ['ACTIVE', 'INACTIVE'].includes(status)) where.status = status;
 
-      // Execute queries in parallel
       const [pricingLists, total] = await Promise.all([
         prisma.pricingList.findMany({
           where,
@@ -62,16 +50,8 @@ export const GET = withPermission(
           take: limit,
           orderBy: { createdAt: 'desc' },
           include: {
-            customer: {
-              select: {
-                id: true,
-                name: true,
-                externalId: true,
-              },
-            },
-            _count: {
-              select: { pricingRules: true },
-            },
+            customer: { select: { id: true, name: true, externalId: true } },
+            _count: { select: { pricingRules: true } },
           },
         }),
         prisma.pricingList.count({ where }),
@@ -90,12 +70,7 @@ export const GET = withPermission(
 
       return success({
         data,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit),
-        },
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
       });
     } catch (error) {
       console.error('Failed to list pricing lists:', error);
@@ -107,7 +82,12 @@ export const GET = withPermission(
 /**
  * POST /api/pricing-lists
  *
- * Create a new pricing list.
+ * Create a new pricing list. Also creates the list's default PricingRule
+ * (isDefault=true) covering every SkuGroup, with discountRate derived from
+ * `defaultDiscountPercent` (e.g. 10 → 0.9 = 10% off list).
+ *
+ * Runs in a single transaction so the list is never observed without its
+ * default rule.
  */
 export const POST = withPermission(
   { resource: 'customers', action: 'update' },
@@ -115,46 +95,55 @@ export const POST = withPermission(
     try {
       const body = await request.json();
       const validation = createPricingListSchema.safeParse(body);
-
       if (!validation.success) {
         return validationError(validation.error);
       }
-
       const data = validation.data;
 
-      // Verify customer exists
-      const customer = await prisma.customer.findUnique({
-        where: { id: data.customerId },
-      });
+      const customer = await prisma.customer.findUnique({ where: { id: data.customerId } });
+      if (!customer) return notFound('Customer');
 
-      if (!customer) {
-        return notFound('Customer not found');
-      }
+      const allGroups = await prisma.skuGroup.findMany({ select: { id: true } });
+      const discountRate = (1 - data.defaultDiscountPercent / 100).toFixed(4); // 4 decimal places to match @db.Decimal(5,4)
 
-      // Create pricing list
-      const pricingList = await prisma.pricingList.create({
-        data: {
-          customerId: data.customerId,
-          name: data.name,
-          status: PricingListStatus.ACTIVE,
-        },
-        include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
-            },
+      const pricingList = await prisma.$transaction(async (tx) => {
+        const list = await tx.pricingList.create({
+          data: {
+            customerId: data.customerId,
+            name: data.name,
+            status: data.status,
           },
-        },
+          include: { customer: { select: { id: true, name: true } } },
+        });
+
+        const defaultRule = await tx.pricingRule.create({
+          data: {
+            pricingListId: list.id,
+            isDefault: true,
+            ruleType: 'LIST_DISCOUNT',
+            discountRate,
+          },
+        });
+
+        if (allGroups.length > 0) {
+          await tx.pricingRuleSkuGroup.createMany({
+            data: allGroups.map((g) => ({
+              pricingRuleId: defaultRule.id,
+              skuGroupId: g.id,
+              pricingListId: list.id,
+            })),
+          });
+        }
+
+        return list;
       });
 
-      // Audit log
-      await logCreate(
-        context,
-        'pricing_lists',
-        pricingList.id,
-        pricingList as unknown as Record<string, unknown>
-      );
+      await logCreate(context, 'pricing_lists', pricingList.id, {
+        customerId: pricingList.customerId,
+        name: pricingList.name,
+        defaultDiscountPercent: data.defaultDiscountPercent,
+        defaultGroupCount: allGroups.length,
+      });
 
       return created({
         id: pricingList.id,
@@ -162,6 +151,7 @@ export const POST = withPermission(
         status: pricingList.status,
         isActive: pricingList.status === 'ACTIVE',
         customer: pricingList.customer,
+        defaultDiscountPercent: data.defaultDiscountPercent,
         createdAt: pricingList.createdAt,
       });
     } catch (error) {

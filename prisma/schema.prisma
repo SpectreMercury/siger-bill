@@ -35,6 +35,8 @@ model User {
   billingIngestionBatches BillingIngestionBatch[]  @relation("BillingIngestionCreator") // Phase 5
   payments                Payment[]                @relation("PaymentRecorder") // Phase X
   gcpConnections          GcpConnection[]          @relation("GcpConnectionCreator")
+  projectBillingConfigsCreated ProjectBillingConfig[] @relation("ProjectBillingConfigCreator")
+  projectBillingConfigsUpdated ProjectBillingConfig[] @relation("ProjectBillingConfigUpdater")
 
   @@index([email])
   @@index([isActive])
@@ -180,6 +182,7 @@ model Customer {
   invoices             Invoice[]
   configSnapshots      ConfigSnapshot[]
   customerProjects     CustomerProject[]
+  projectBillingConfigs ProjectBillingConfig[]
   pricingLists         PricingList[]
   credits              Credit[] // Phase 3.3
   specialRules         SpecialRule[] @relation("SpecialRuleCustomer") // Phase 3.5
@@ -254,6 +257,31 @@ model Project {
   @@index([billingAccountId])
   @@index([status])
   @@map("projects")
+}
+
+/// Project billing configuration — per (project_id × customer) record that
+/// stores whether the project is billable for that customer. `projectId` is a
+/// raw GCP project id string (not an FK to the Project table), so configs can
+/// be created without first registering the project in the system.
+model ProjectBillingConfig {
+  id         String   @id @default(uuid()) @db.Uuid
+  projectId  String   @map("project_id") @db.VarChar(100)
+  customerId String   @map("customer_id") @db.Uuid
+  billable   Boolean  @default(true)
+  createdBy  String?  @map("created_by") @db.Uuid // null if seeded / system-created
+  updatedBy  String?  @map("updated_by") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  creator  User?    @relation("ProjectBillingConfigCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  updater  User?    @relation("ProjectBillingConfigUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, customerId])
+  @@index([customerId])
+  @@index([projectId])
+  @@map("project_billing_configs")
 }
 
 /// Customer to Project mapping with history support
@@ -768,9 +796,9 @@ model SkuGroup {
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
-  skuGroupMappings SkuGroupMapping[]
-  pricingRules     PricingRule[]
-  specialRules     SpecialRule[] // Phase 3.5
+  skuGroupMappings  SkuGroupMapping[]
+  pricingRuleGroups PricingRuleSkuGroup[]
+  specialRules      SpecialRule[] // Phase 3.5
 
   @@map("sku_groups")
 }
@@ -830,31 +858,49 @@ enum PricingRuleType {
   @@map("pricing_rule_type")
 }
 
-/// Pricing rule - defines how to price a SKU group
-/// Rule type determines which field is used:
-///   LIST_DISCOUNT → discountRate (e.g. 0.9 = pay 90% of list = 10% off)
-///   UNIT_PRICE    → unitPrice (fixed price per unit)
-///   TIERED        → tiers JSON ([{from, to, rate?, unitPrice?}, ...])
+/// Pricing rule - defines how to price one or more SKU groups within a pricing list.
+/// Each pricing list has exactly one default rule (isDefault=true) and zero or
+/// more explicit rules. The set of SkuGroups covered by each rule is stored
+/// explicitly via `PricingRuleSkuGroup`. Within a pricing list, a SkuGroup
+/// belongs to exactly one rule at any moment (enforced by DB unique constraint).
 model PricingRule {
   id             String          @id @default(uuid()) @db.Uuid
   pricingListId  String          @map("pricing_list_id") @db.Uuid
+  isDefault      Boolean         @default(false) @map("is_default") // exactly one per list
   ruleType       PricingRuleType @default(LIST_DISCOUNT) @map("rule_type")
   discountRate   Decimal?        @map("discount_rate") @db.Decimal(5, 4) // LIST_DISCOUNT: 0.9 = 90% of list
   unitPrice      Decimal?        @map("unit_price") @db.Decimal(18, 8)   // UNIT_PRICE: fixed price per unit
   tiers          Json?           @db.JsonB                                // TIERED: [{from, to, rate|unitPrice}]
-  skuGroupId     String?         @map("sku_group_id") @db.Uuid // null = applies to all SKUs
   effectiveStart DateTime?       @map("effective_start") @db.Date
   effectiveEnd   DateTime?       @map("effective_end") @db.Date
-  priority       Int             @default(100) // Lower number = higher priority
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
-  pricingList PricingList @relation(fields: [pricingListId], references: [id], onDelete: Cascade)
-  skuGroup    SkuGroup?   @relation(fields: [skuGroupId], references: [id], onDelete: SetNull)
+  pricingList PricingList            @relation(fields: [pricingListId], references: [id], onDelete: Cascade)
+  skuGroups   PricingRuleSkuGroup[]
 
-  @@index([pricingListId, skuGroupId, priority])
+  @@index([pricingListId, isDefault])
   @@map("pricing_rules")
+}
+
+/// Join table: which SkuGroups a PricingRule covers within a PricingList.
+/// `pricingListId` is denormalized solely to support the DB-level invariant
+/// `@@unique([pricingListId, skuGroupId])` — one rule per group per list.
+model PricingRuleSkuGroup {
+  id            String   @id @default(uuid()) @db.Uuid
+  pricingRuleId String   @map("pricing_rule_id") @db.Uuid
+  skuGroupId    String   @map("sku_group_id") @db.Uuid
+  pricingListId String   @map("pricing_list_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  pricingRule PricingRule @relation(fields: [pricingRuleId], references: [id], onDelete: Cascade)
+  skuGroup    SkuGroup    @relation(fields: [skuGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([pricingListId, skuGroupId]) // ★ invariant: 1 group → 1 rule per list
+  @@index([pricingRuleId])
+  @@index([skuGroupId])
+  @@map("pricing_rule_sku_groups")
 }
 
 // =============================================================================

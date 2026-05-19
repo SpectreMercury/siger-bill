@@ -34,24 +34,15 @@ export const GET = withPermission(
       const pricingList = await prisma.pricingList.findUnique({
         where: { id },
         include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
-              externalId: true,
-            },
-          },
+          customer: { select: { id: true, name: true, externalId: true } },
           pricingRules: {
             include: {
-              skuGroup: {
-                select: {
-                  id: true,
-                  code: true,
-                  name: true,
-                },
+              skuGroups: {
+                include: { skuGroup: { select: { id: true, code: true, name: true } } },
+                orderBy: { skuGroup: { code: 'asc' } },
               },
             },
-            orderBy: { createdAt: 'desc' },
+            orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
           },
         },
       });
@@ -68,7 +59,8 @@ export const GET = withPermission(
         customer: pricingList.customer,
         rules: pricingList.pricingRules.map((rule) => ({
           id: rule.id,
-          skuGroup: rule.skuGroup,
+          isDefault: rule.isDefault,
+          skuGroups: rule.skuGroups.map((g) => g.skuGroup),
           ruleType: rule.ruleType,
           discountRate: rule.discountRate ? rule.discountRate.toString() : null,
           discountPercent: rule.discountRate ? ((1 - Number(rule.discountRate)) * 100).toFixed(1) : null,
@@ -76,7 +68,6 @@ export const GET = withPermission(
           tiers: rule.tiers ?? null,
           effectiveStart: rule.effectiveStart,
           effectiveEnd: rule.effectiveEnd,
-          priority: rule.priority,
           createdAt: rule.createdAt,
         })),
         createdAt: pricingList.createdAt,

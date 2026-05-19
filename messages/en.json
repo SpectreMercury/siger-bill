@@ -118,6 +118,7 @@
       "customers": "Customers",
       "contracts": "Contracts",
       "pricingLists": "Pricing Lists",
+      "projectBillingConfigs": "Project Billing",
       "credits": "Credits",
       "specialRules": "Special Rules",
       "rawCostImports": "Cost Imports"
@@ -458,7 +459,21 @@
     "actions": {
       "create": "Create Group",
       "manageItems": "Manage Items",
-      "addItems": "Add Items"
+      "addItems": "Add Items",
+      "uploadExcel": "Upload Excel"
+    },
+    "import": {
+      "resultTitle": "Import Result",
+      "fileName": "File Name",
+      "totalRows": "Total Rows",
+      "skuGroups": "SKU Groups",
+      "skus": "SKUs",
+      "mappings": "SKU↔Group Mappings",
+      "unique": "Unique",
+      "inserted": "Inserted",
+      "existing": "Existing",
+      "orphan": "Orphan (unmatched)",
+      "rowErrors": "Row Errors"
     },
     "modal": {
       "createTitle": "Create Product Group",
@@ -536,6 +551,8 @@
       "create": "Add Pricing List",
       "manageRules": "Rules"
     },
+    "defaultDiscountPercent": "Default Discount Rate",
+    "defaultDiscountHint": "On creation, the system inserts a default rule covering every SKU group; this rate applies to any group not covered by an explicit rule. 0 = no discount.",
     "modal": {
       "createTitle": "Create Pricing List",
       "editTitle": "Edit Pricing List",
@@ -549,18 +566,30 @@
       "rules": "Pricing Rules",
       "addRule": "Add Rule",
       "noRules": "No pricing rules defined yet",
-      "skuGroup": "SKU Group",
-      "allSkus": "All SKUs (Default)",
+      "skuGroup": "SKU Groups",
+      "skuGroupsSelect": "SKU Groups (multi-select)",
+      "skuGroupsHint": "Only groups currently under the default rule are listed. Selecting them moves them off the default rule and onto this new rule.",
+      "selectAllVisible": "Select all visible",
+      "searchGroup": "Search groups (code or name)",
+      "noGroupsInDefault": "No groups available under the default rule — all are covered by explicit rules.",
+      "noGroupsMatch": "No groups match",
+      "selected": "{n} of {total} selected",
+      "defaultBadge": "Default",
+      "explicitBadge": "Explicit",
+      "defaultCoversAll": "Covers remaining {count} group(s) (not in any explicit rule)",
+      "coverage": {
+        "total": "Total groups",
+        "default": "Under default",
+        "explicit": "Under explicit rules"
+      },
       "ruleType": "Rule Type",
       "value": "Pricing Value",
       "discount": "Discount",
-      "priority": "Priority",
       "effectivePeriod": "Effective Period",
       "always": "Always",
       "addRuleTitle": "Add Pricing Rule",
-      "selectSkuGroup": "Select SKU group...",
-      "skuGroupHint": "Leave empty to apply to all SKUs not covered by other rules",
       "discountPercent": "Discount Percentage",
+      "discountPaysHint": "= customer pays list price ×",
       "discountHint": "e.g., 10 means customer pays 90% of list price (10% off)",
       "discountExample": "Example: $100 list × 10% off → customer pays $90",
       "unitPrice": "Unit Price",
@@ -576,11 +605,13 @@
       "tiersHint": "Define spend bands — the more they spend, the better the rate",
       "effectiveStart": "Start Date",
       "effectiveEnd": "End Date",
-      "priorityHint": "Lower number = higher priority",
       "addRuleFailed": "Failed to add pricing rule",
       "deleteRuleTitle": "Delete Pricing Rule",
-      "deleteRuleConfirm": "Are you sure you want to delete this pricing rule?",
+      "deleteRuleConfirm": "Delete this pricing rule? Its {n} SKU group(s) will be returned to the default rule.",
       "deleteRuleFailed": "Failed to delete pricing rule",
+      "errors": {
+        "atLeastOneGroup": "At least one SKU group is required"
+      },
       "ruleTypes": {
         "LIST_DISCOUNT": "List Discount",
         "UNIT_PRICE": "Unit Price",
@@ -591,6 +622,32 @@
         "UNIT_PRICE": "Fixed price per unit (replaces list price)",
         "TIERED": "Progressive rates based on spend volume"
       }
+    }
+  },
+  "projectBillingConfigs": {
+    "title": "Project Billing Configs",
+    "subtitle": "Per (project ID × customer) configuration of whether this project is billable for that customer.",
+    "projectId": "Project ID",
+    "customer": "Customer",
+    "billable": "Billable",
+    "billableYes": "Billable",
+    "billableNo": "Not Billable",
+    "createdAt": "Created",
+    "updatedAt": "Updated",
+    "by": "By",
+    "searchPlaceholder": "Search project ID or customer...",
+    "empty": "No configs yet",
+    "loadFailed": "Load failed",
+    "saveFailed": "Save failed",
+    "deleteFailed": "Delete failed",
+    "actions": { "create": "New Config" },
+    "placeholders": { "projectId": "e.g. my-prod-project-001" },
+    "hints": { "projectId": "Raw GCP project ID string; does not need to be registered under Projects." },
+    "modal": {
+      "createTitle": "New Project Billing Config",
+      "editTitle": "Edit Project Billing Config",
+      "deleteTitle": "Delete Config",
+      "deleteConfirm": "Delete the billing config for project \"{projectId}\" under customer \"{customer}\"?"
     }
   },
   "credits": {

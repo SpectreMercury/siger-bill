@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { ColumnDef } from '@tanstack/react-table';
-import { api } from '@/lib/client/api';
+import { api, getAuthToken } from '@/lib/client/api';
 import { SkuGroup, PaginatedResponse } from '@/lib/client/types';
 import { DataTable, Button, Alert } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
@@ -14,7 +14,19 @@ import { Input } from '@/components/ui/shadcn/input';
 import { Label } from '@/components/ui/shadcn/label';
 import { Textarea } from '@/components/ui/shadcn/textarea';
 import { Can } from '@/components/auth';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Upload } from 'lucide-react';
+
+interface ImportSummary {
+  fileName: string;
+  totalRows: number;
+  validRows: number;
+  rowErrors: number;
+  skus: { unique: number; inserted: number; existing: number };
+  skuGroups: { unique: number; inserted: number; existing: number };
+  mappings: { unique: number; inserted: number; existing: number; orphan: number };
+  errors: Array<{ row: number; reason: string }>;
+  orphanPairs: Array<{ skuId: string; code: string }>;
+}
 
 export default function SkuGroupsPage() {
   const router = useRouter();
@@ -26,6 +38,9 @@ export default function SkuGroupsPage() {
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState({ code: '', name: '', description: '' });
   const [isSaving, setIsSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
 
   const fetchSkuGroups = useCallback(async () => {
     setIsLoading(true);
@@ -117,6 +132,39 @@ export default function SkuGroupsPage() {
     }
   };
 
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsImporting(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const token = getAuthToken();
+      const res = await fetch('/api/skus/import', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: formData,
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || 'Import failed');
+      }
+      setImportSummary(body as ImportSummary);
+      fetchSkuGroups();
+    } catch (err) {
+      console.error('Import failed:', err);
+      setError(err instanceof Error ? err.message : 'Import failed');
+    } finally {
+      setIsImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -126,14 +174,29 @@ export default function SkuGroupsPage() {
             {t('subtitle')}
           </p>
         </div>
-        <Can resource="sku_groups" action="create">
-          <Button onClick={() => setShowModal(true)}>
-            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            {t('actions.create')}
-          </Button>
-        </Can>
+        <div className="flex items-center gap-2">
+          <Can resource="skus" action="import">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={handleFileSelected}
+            />
+            <Button variant="secondary" onClick={handleUploadClick} isLoading={isImporting}>
+              <Upload className="w-4 h-4 mr-2" />
+              {t('actions.uploadExcel')}
+            </Button>
+          </Can>
+          <Can resource="sku_groups" action="create">
+            <Button onClick={() => setShowModal(true)}>
+              <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              {t('actions.create')}
+            </Button>
+          </Can>
+        </div>
       </div>
 
       {error && (
@@ -153,6 +216,74 @@ export default function SkuGroupsPage() {
           pageSize={20}
         />
       </Card>
+
+      <Modal
+        isOpen={!!importSummary}
+        onClose={() => setImportSummary(null)}
+        title={t('import.resultTitle')}
+        size="lg"
+      >
+        {importSummary && (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-muted-foreground">{t('import.fileName')}</div>
+                <div className="font-mono">{importSummary.fileName}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">{t('import.totalRows')}</div>
+                <div>{importSummary.totalRows}</div>
+              </div>
+            </div>
+
+            <div className="rounded-md border p-3 space-y-2">
+              <div className="font-medium">{t('import.skuGroups')}</div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div><span className="text-muted-foreground">{t('import.unique')}: </span>{importSummary.skuGroups.unique}</div>
+                <div><span className="text-muted-foreground">{t('import.inserted')}: </span><span className="text-green-600 font-medium">{importSummary.skuGroups.inserted}</span></div>
+                <div><span className="text-muted-foreground">{t('import.existing')}: </span>{importSummary.skuGroups.existing}</div>
+              </div>
+            </div>
+
+            <div className="rounded-md border p-3 space-y-2">
+              <div className="font-medium">{t('import.skus')}</div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div><span className="text-muted-foreground">{t('import.unique')}: </span>{importSummary.skus.unique}</div>
+                <div><span className="text-muted-foreground">{t('import.inserted')}: </span><span className="text-green-600 font-medium">{importSummary.skus.inserted}</span></div>
+                <div><span className="text-muted-foreground">{t('import.existing')}: </span>{importSummary.skus.existing}</div>
+              </div>
+            </div>
+
+            <div className="rounded-md border p-3 space-y-2">
+              <div className="font-medium">{t('import.mappings')}</div>
+              <div className="grid grid-cols-4 gap-2 text-xs">
+                <div><span className="text-muted-foreground">{t('import.unique')}: </span>{importSummary.mappings.unique}</div>
+                <div><span className="text-muted-foreground">{t('import.inserted')}: </span><span className="text-green-600 font-medium">{importSummary.mappings.inserted}</span></div>
+                <div><span className="text-muted-foreground">{t('import.existing')}: </span>{importSummary.mappings.existing}</div>
+                <div><span className="text-muted-foreground">{t('import.orphan')}: </span>{importSummary.mappings.orphan}</div>
+              </div>
+            </div>
+
+            {importSummary.rowErrors > 0 && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+                <div className="font-medium text-amber-900">{t('import.rowErrors')} ({importSummary.rowErrors})</div>
+                <ul className="mt-2 space-y-1 text-xs text-amber-800 max-h-40 overflow-auto">
+                  {importSummary.errors.map((e, i) => (
+                    <li key={i}>Row {e.row}: {e.reason}</li>
+                  ))}
+                  {importSummary.rowErrors > importSummary.errors.length && (
+                    <li className="italic">…{importSummary.rowErrors - importSummary.errors.length} more</li>
+                  )}
+                </ul>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2">
+              <Button onClick={() => setImportSummary(null)}>{tc('close')}</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         isOpen={showModal}

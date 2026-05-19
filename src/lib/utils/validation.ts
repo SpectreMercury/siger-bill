@@ -235,10 +235,16 @@ export const skuGroupMappingSchema = z.object({
 
 /**
  * Pricing list creation schema
+ *
+ * `defaultDiscountPercent` is required: when the list is created, the system
+ * also creates one isDefault=true PricingRule covering every SkuGroup, with
+ * `discountRate = 1 - defaultDiscountPercent/100`.
  */
 export const createPricingListSchema = z.object({
+  customerId: z.string().uuid(),
   name: z.string().min(1, 'Name is required').max(255),
   status: z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
+  defaultDiscountPercent: z.number().min(0).max(100),
 });
 
 /**
@@ -267,10 +273,9 @@ export const createPricingRuleSchema = z
     discountRate: z.number().min(0).max(2).optional().nullable(),
     unitPrice: z.number().min(0).optional().nullable(),
     tiers: z.array(pricingTierSchema).min(1).optional().nullable(),
-    skuGroupId: z.string().uuid().optional().nullable(),
+    skuGroupIds: z.array(z.string().uuid()).min(1, 'At least one SKU group is required'),
     effectiveStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional().nullable(),
     effectiveEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional().nullable(),
-    priority: z.number().int().min(0).max(9999).default(100),
   })
   .superRefine((data, ctx) => {
     if (data.ruleType === 'LIST_DISCOUNT' && (data.discountRate == null)) {
@@ -282,6 +287,19 @@ export const createPricingRuleSchema = z
     if (data.ruleType === 'TIERED' && (!data.tiers || data.tiers.length === 0)) {
       ctx.addIssue({ code: 'custom', path: ['tiers'], message: 'tiers is required for TIERED rules' });
     }
+  });
+
+/**
+ * Pricing rule update schema (default rule's discount/unit price/tiers — not group set).
+ */
+export const updatePricingRuleSchema = z
+  .object({
+    ruleType: z.enum(['LIST_DISCOUNT', 'UNIT_PRICE', 'TIERED']).optional(),
+    discountRate: z.number().min(0).max(2).optional().nullable(),
+    unitPrice: z.number().min(0).optional().nullable(),
+    tiers: z.array(pricingTierSchema).min(1).optional().nullable(),
+    effectiveStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+    effectiveEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   });
 
 // ============================================================================

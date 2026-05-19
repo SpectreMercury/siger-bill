@@ -1,62 +1,51 @@
 /**
- * Pricing Engine v2.0 (Phase 3 + 3.5)
+ * Pricing Engine v3.0 (Phase 3 + 3.5 + Rule Revamp)
  *
  * Converts raw GCP cost data into commercial pricing for invoices.
+ *
+ * Rule model (post-revamp):
+ * - Each PricingList has exactly one default rule (isDefault=true) plus zero
+ *   or more explicit rules.
+ * - A SkuGroup is covered by exactly one rule per list (DB-enforced via
+ *   `pricing_rule_sku_groups.@@unique([pricingListId, skuGroupId])`).
+ * - Engine selection: find the rule whose `skuGroups` includes the SKU's
+ *   group → fall back to the default rule when not found (e.g. UNMAPPED).
  *
  * Supported rule types:
  *   LIST_DISCOUNT: final_cost = raw_cost * discountRate
  *   UNIT_PRICE:    final_cost = usage_amount * unitPrice  (raw_cost is replaced)
- *   TIERED:        Spend-based progressive discount — picks the tier matching the
- *                  cumulative spend and applies its rate or unitPrice
- *
- * Rule matching algorithm:
- * 1. Find all rules where effectiveStart <= billingMonth <= effectiveEnd (or null)
- * 2. Filter by skuGroupId (exact match or null for wildcard)
- * 3. Sort by priority (ascending), then specificity (exact > wildcard)
- * 4. Pick the first matching rule
+ *   TIERED:        Spend-based progressive discount.
  */
 
 import { prisma } from '@/lib/db';
 import { Prisma, PricingRuleType } from '@prisma/client';
 
-/**
- * SKU Group mapping cache type
- */
 export interface SkuGroupMapping {
   skuId: string;
   skuGroupId: string;
   skuGroupCode: string;
 }
 
-/**
- * A single tier in a TIERED rule
- */
 export interface PricingTier {
-  from: number;       // spend threshold (inclusive), e.g. 0 or 10000
-  to: number | null;  // exclusive upper bound; null = unbounded
-  rate?: number | null;      // multiplier: 0.90 = 90% of list = 10% discount
-  unitPrice?: number | null; // fixed price per unit
+  from: number;
+  to: number | null;
+  rate?: number | null;
+  unitPrice?: number | null;
 }
 
-/**
- * Pricing rule definition (loaded from DB)
- */
 export interface PricingRuleData {
   id: string;
+  isDefault: boolean;
   ruleType: PricingRuleType;
   discountRate: Prisma.Decimal | null;
   unitPrice: Prisma.Decimal | null;
   tiers: PricingTier[] | null;
-  skuGroupId: string | null;
-  skuGroupCode: string | null;
+  skuGroupIds: string[];     // empty for default rule when covering nothing; engine falls back regardless
+  skuGroupCodes: string[];
   effectiveStart: Date | null;
   effectiveEnd: Date | null;
-  priority: number;
 }
 
-/**
- * Result of applying pricing to a cost entry
- */
 export interface PricedEntry {
   rawCost: Prisma.Decimal;
   pricedCost: Prisma.Decimal;
@@ -66,9 +55,6 @@ export interface PricedEntry {
   skuGroupCode: string | null;
 }
 
-/**
- * Summary of pricing by SKU group
- */
 export interface SkuGroupPricingSummary {
   skuGroupCode: string;
   rawTotal: string;
@@ -78,9 +64,6 @@ export interface SkuGroupPricingSummary {
   entryCount: number;
 }
 
-/**
- * Pricing engine result for a customer
- */
 export interface CustomerPricingResult {
   customerId: string;
   pricingListId: string | null;
@@ -129,8 +112,10 @@ export async function loadPricingRules(customerId: string): Promise<{
     where: { customerId, status: 'ACTIVE' },
     include: {
       pricingRules: {
-        include: { skuGroup: { select: { code: true } } },
-        orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+        include: {
+          skuGroups: { include: { skuGroup: { select: { id: true, code: true } } } },
+        },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
       },
     },
   });
@@ -141,23 +126,20 @@ export async function loadPricingRules(customerId: string): Promise<{
 
   const rules: PricingRuleData[] = pricingList.pricingRules.map((r) => ({
     id: r.id,
+    isDefault: r.isDefault,
     ruleType: r.ruleType,
     discountRate: r.discountRate ?? null,
     unitPrice: r.unitPrice ?? null,
     tiers: r.tiers ? (r.tiers as unknown as PricingTier[]) : null,
-    skuGroupId: r.skuGroupId,
-    skuGroupCode: r.skuGroup?.code ?? null,
+    skuGroupIds: r.skuGroups.map((g) => g.skuGroup.id),
+    skuGroupCodes: r.skuGroups.map((g) => g.skuGroup.code),
     effectiveStart: r.effectiveStart,
     effectiveEnd: r.effectiveEnd,
-    priority: r.priority,
   }));
 
   return { pricingListId: pricingList.id, rules };
 }
 
-/**
- * Check if a date falls within a rule's effective range
- */
 function isRuleEffective(
   rule: PricingRuleData,
   billingMonthStart: Date,
@@ -170,7 +152,12 @@ function isRuleEffective(
 }
 
 /**
- * Find the best matching pricing rule for a SKU group
+ * Find the rule that covers a given SKU group within the customer's pricing list.
+ *
+ * Order:
+ *   1. Effective explicit rule whose `skuGroupIds` includes the group.
+ *   2. Effective default rule (covers anything not in an explicit rule).
+ *   3. null (no pricing list, or all rules outside effective window).
  */
 export function selectBestRule(
   skuGroupId: string | null,
@@ -178,27 +165,22 @@ export function selectBestRule(
   billingMonthStart: Date,
   billingMonthEnd: Date
 ): PricingRuleData | null {
-  const candidates = rules.filter((rule) => {
-    if (!isRuleEffective(rule, billingMonthStart, billingMonthEnd)) return false;
-    if (rule.skuGroupId === null) return true; // wildcard
-    return rule.skuGroupId === skuGroupId;
-  });
-
-  if (candidates.length === 0) return null;
-
-  candidates.sort((a, b) => {
-    if (a.priority !== b.priority) return a.priority - b.priority;
-    const aSpecific = a.skuGroupId !== null ? 0 : 1;
-    const bSpecific = b.skuGroupId !== null ? 0 : 1;
-    return aSpecific - bSpecific;
-  });
-
-  return candidates[0];
+  // Explicit rules first
+  if (skuGroupId) {
+    for (const rule of rules) {
+      if (rule.isDefault) continue;
+      if (!isRuleEffective(rule, billingMonthStart, billingMonthEnd)) continue;
+      if (rule.skuGroupIds.includes(skuGroupId)) return rule;
+    }
+  }
+  // Default fallback
+  const defaultRule = rules.find((r) => r.isDefault);
+  if (defaultRule && isRuleEffective(defaultRule, billingMonthStart, billingMonthEnd)) {
+    return defaultRule;
+  }
+  return null;
 }
 
-/**
- * Find the matching tier for a given spend amount
- */
 function selectTier(tiers: PricingTier[], spendAmount: Prisma.Decimal): PricingTier | null {
   const amount = Number(spendAmount.toString());
   return tiers.find((tier) => {
@@ -208,9 +190,6 @@ function selectTier(tiers: PricingTier[], spendAmount: Prisma.Decimal): PricingT
   }) ?? null;
 }
 
-/**
- * Apply pricing to a single cost entry
- */
 export function applyPricingToEntry(
   rawCost: Prisma.Decimal,
   skuGroupId: string | null,
@@ -239,11 +218,8 @@ export function applyPricingToEntry(
       break;
 
     case 'UNIT_PRICE':
-      // Replace cost entirely with unitPrice (unit_price × quantity is handled upstream;
-      // here we treat the rule as a multiplier of 1 and override cost if unit price matches)
       if (rule.unitPrice != null) {
-        // For unit-price rules we record the unitPrice as the "rate" for audit purposes
-        pricedCost = rawCost; // actual unit × price is applied during ingestion; here passthrough
+        pricedCost = rawCost;
         effectiveRate = rule.unitPrice;
       } else {
         pricedCost = rawCost;
@@ -258,7 +234,6 @@ export function applyPricingToEntry(
           pricedCost = rawCost.mul(rate);
           effectiveRate = rate;
         } else if (tier?.unitPrice != null) {
-          // Per-unit override; treat same as unit price rule
           pricedCost = rawCost;
           effectiveRate = new Prisma.Decimal(tier.unitPrice);
         } else {
@@ -276,9 +251,6 @@ export function applyPricingToEntry(
   return { rawCost, pricedCost, ruleId: rule.id, ruleType: rule.ruleType, discountRate: effectiveRate, skuGroupCode };
 }
 
-/**
- * Main pricing function: Apply pricing rules to all cost entries for a customer
- */
 export async function applyPricingForCustomer(
   customerId: string,
   costEntries: Array<{ skuId: string; cost: Prisma.Decimal }>,
@@ -349,15 +321,15 @@ export interface PricingConfigSnapshot {
   pricingListId: string | null;
   rules: Array<{
     ruleId: string;
+    isDefault: boolean;
     ruleType: string;
     discountRate: string | null;
     unitPrice: string | null;
     tiers: PricingTier[] | null;
-    skuGroupId: string | null;
-    skuGroupCode: string | null;
+    skuGroupIds: string[];
+    skuGroupCodes: string[];
     effectiveStart: string | null;
     effectiveEnd: string | null;
-    priority: number;
   }>;
   capturedAt: string;
 }
@@ -371,15 +343,15 @@ export async function capturePricingConfigSnapshot(
     pricingListId,
     rules: rules.map((r) => ({
       ruleId: r.id,
+      isDefault: r.isDefault,
       ruleType: r.ruleType,
       discountRate: r.discountRate?.toString() ?? null,
       unitPrice: r.unitPrice?.toString() ?? null,
       tiers: r.tiers,
-      skuGroupId: r.skuGroupId,
-      skuGroupCode: r.skuGroupCode,
+      skuGroupIds: r.skuGroupIds,
+      skuGroupCodes: r.skuGroupCodes,
       effectiveStart: r.effectiveStart?.toISOString() ?? null,
       effectiveEnd: r.effectiveEnd?.toISOString() ?? null,
-      priority: r.priority,
     })),
     capturedAt: new Date().toISOString(),
   };

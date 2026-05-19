@@ -118,6 +118,7 @@
       "customers": "客户",
       "contracts": "合同",
       "pricingLists": "定价列表",
+      "projectBillingConfigs": "Project 计费配置",
       "credits": "信用额度",
       "specialRules": "特殊规则",
       "rawCostImports": "成本导入"
@@ -458,7 +459,21 @@
     "actions": {
       "create": "创建分组",
       "manageItems": "管理项目",
-      "addItems": "添加项目"
+      "addItems": "添加项目",
+      "uploadExcel": "上传 Excel"
+    },
+    "import": {
+      "resultTitle": "导入结果",
+      "fileName": "文件名",
+      "totalRows": "总行数",
+      "skuGroups": "SKU 分组",
+      "skus": "SKU",
+      "mappings": "SKU↔分组 映射",
+      "unique": "去重后",
+      "inserted": "新增",
+      "existing": "已存在",
+      "orphan": "孤立 (未匹配)",
+      "rowErrors": "行错误"
     },
     "modal": {
       "createTitle": "创建产品组",
@@ -536,6 +551,8 @@
       "create": "添加定价列表",
       "manageRules": "规则"
     },
+    "defaultDiscountPercent": "默认折扣率",
+    "defaultDiscountHint": "创建后系统会自动生成一条默认规则，覆盖所有 SKU 分组；该折扣率应用于尚未被显式规则覆盖的分组。0 表示不打折。",
     "modal": {
       "createTitle": "创建定价列表",
       "editTitle": "编辑定价列表",
@@ -550,17 +567,29 @@
       "addRule": "添加规则",
       "noRules": "暂无定价规则",
       "skuGroup": "SKU 分组",
-      "allSkus": "所有 SKU（默认）",
+      "skuGroupsSelect": "SKU 分组（可多选）",
+      "skuGroupsHint": "只显示当前归属于默认规则的分组；勾选后会从默认规则中移除并归入这条新规则。",
+      "selectAllVisible": "全选可见",
+      "searchGroup": "搜索分组（code 或名称）",
+      "noGroupsInDefault": "默认规则下已无可用分组，所有分组都已被显式规则覆盖。",
+      "noGroupsMatch": "没有匹配的分组",
+      "selected": "已选 {n} / 共 {total}",
+      "defaultBadge": "默认",
+      "explicitBadge": "显式",
+      "defaultCoversAll": "覆盖剩余 {count} 个分组（其他规则未涉及）",
+      "coverage": {
+        "total": "总分组数",
+        "default": "默认规则覆盖",
+        "explicit": "显式规则覆盖"
+      },
       "ruleType": "规则类型",
       "value": "定价值",
       "discount": "折扣",
-      "priority": "优先级",
       "effectivePeriod": "有效期",
       "always": "始终有效",
       "addRuleTitle": "添加定价规则",
-      "selectSkuGroup": "选择 SKU 分组...",
-      "skuGroupHint": "留空则应用于其他规则未覆盖的所有 SKU",
       "discountPercent": "折扣百分比",
+      "discountPaysHint": "= 客户实付列表价的",
       "discountHint": "例如：10 表示客户实付列表价的 90%（即九折）",
       "discountExample": "原始费用 $100，折扣 10% → 客户实付 $90",
       "unitPrice": "固定单价",
@@ -576,11 +605,13 @@
       "tiersHint": "按消费金额划分阶梯，数字越大折扣越多",
       "effectiveStart": "开始日期",
       "effectiveEnd": "结束日期",
-      "priorityHint": "数字越小，优先级越高",
       "addRuleFailed": "添加定价规则失败",
       "deleteRuleTitle": "删除定价规则",
-      "deleteRuleConfirm": "确定要删除此定价规则吗？",
+      "deleteRuleConfirm": "确定要删除此定价规则吗？删除后这 {n} 个 SKU 分组将自动归还到默认规则。",
       "deleteRuleFailed": "删除定价规则失败",
+      "errors": {
+        "atLeastOneGroup": "至少需要选择一个 SKU 分组"
+      },
       "ruleTypes": {
         "LIST_DISCOUNT": "折扣类",
         "UNIT_PRICE": "单价类",
@@ -591,6 +622,32 @@
         "UNIT_PRICE": "产品组 × 固定单价",
         "TIERED": "按消费金额阶梯定价"
       }
+    }
+  },
+  "projectBillingConfigs": {
+    "title": "Project 计费配置",
+    "subtitle": "按 (project ID × 客户) 维度配置该项目是否对该客户收费",
+    "projectId": "Project ID",
+    "customer": "关联客户",
+    "billable": "是否收费",
+    "billableYes": "收费",
+    "billableNo": "不收费",
+    "createdAt": "创建时间",
+    "updatedAt": "更新时间",
+    "by": "操作人",
+    "searchPlaceholder": "搜索 project ID 或客户...",
+    "empty": "暂无配置",
+    "loadFailed": "加载失败",
+    "saveFailed": "保存失败",
+    "deleteFailed": "删除失败",
+    "actions": { "create": "新增配置" },
+    "placeholders": { "projectId": "例如 my-prod-project-001" },
+    "hints": { "projectId": "原始 GCP project ID 字符串，不必预先注册到系统的 Projects 列表里" },
+    "modal": {
+      "createTitle": "新增 Project 计费配置",
+      "editTitle": "编辑 Project 计费配置",
+      "deleteTitle": "删除配置",
+      "deleteConfirm": "确定要删除 project「{projectId}」在客户「{customer}」下的计费配置吗？"
     }
   },
   "credits": {

@@ -12,13 +12,6 @@ import { Badge } from '@/components/ui/shadcn/badge';
 import { Button } from '@/components/ui/shadcn/button';
 import { Input } from '@/components/ui/shadcn/input';
 import { Label } from '@/components/ui/shadcn/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/shadcn/select';
 import { Modal } from '@/components/ui/Modal';
 import { Can } from '@/components/auth';
 import {
@@ -29,6 +22,7 @@ import {
   Percent,
   DollarSign,
   Layers,
+  Star,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -40,21 +34,21 @@ type RuleType = 'LIST_DISCOUNT' | 'UNIT_PRICE' | 'TIERED';
 interface PricingTier {
   from: number;
   to: number | null;
-  rate?: number | null;      // for LIST_DISCOUNT tiers: 0.90 = 90% of list
-  unitPrice?: number | null; // for UNIT_PRICE tiers
+  rate?: number | null;
+  unitPrice?: number | null;
 }
 
 interface PricingRule {
   id: string;
+  isDefault: boolean;
   ruleType: RuleType;
   discountRate: string | null;
   discountPercent: string | null;
   unitPrice: string | null;
   tiers: PricingTier[] | null;
-  skuGroup: { id: string; code: string; name: string } | null;
+  skuGroups: Array<{ id: string; code: string; name: string }>;
   effectiveStart: string | null;
   effectiveEnd: string | null;
-  priority: number;
   createdAt: string;
 }
 
@@ -71,16 +65,16 @@ interface PricingListDetail {
 
 interface TierRow {
   from: string;
-  to: string;         // empty string = unbounded
-  rate: string;       // "" if using unitPrice
-  unitPrice: string;  // "" if using rate
+  to: string;
+  rate: string;
+  unitPrice: string;
 }
 
 const defaultTierRow = (): TierRow => ({ from: '0', to: '', rate: '', unitPrice: '' });
 
 interface RuleFormData {
   ruleType: RuleType;
-  skuGroupId: string;
+  skuGroupIds: string[];      // multi-select
   // LIST_DISCOUNT
   discountPercent: string;
   // UNIT_PRICE
@@ -90,25 +84,23 @@ interface RuleFormData {
   // common
   effectiveStart: string;
   effectiveEnd: string;
-  priority: string;
 }
 
 const defaultForm = (): RuleFormData => ({
   ruleType: 'LIST_DISCOUNT',
-  skuGroupId: '',
+  skuGroupIds: [],
   discountPercent: '10',
   unitPrice: '',
   tiers: [defaultTierRow(), { from: '', to: '', rate: '', unitPrice: '' }],
   effectiveStart: '',
   effectiveEnd: '',
-  priority: '100',
 });
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatRuleValue(rule: PricingRule, t: ReturnType<typeof useTranslations>): React.ReactNode {
+function formatRuleValue(rule: PricingRule): React.ReactNode {
   if (rule.ruleType === 'LIST_DISCOUNT') {
     return (
       <Badge variant="secondary" className="font-mono">
@@ -161,7 +153,7 @@ export default function PricingListDetailPage() {
   const tc = useTranslations('common');
 
   const [pricingList, setPricingList] = useState<PricingListDetail | null>(null);
-  const [skuGroups, setSkuGroups] = useState<SkuGroup[]>([]);
+  const [allSkuGroups, setAllSkuGroups] = useState<SkuGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -170,6 +162,7 @@ export default function PricingListDetailPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [formData, setFormData] = useState<RuleFormData>(defaultForm());
+  const [groupFilter, setGroupFilter] = useState('');
 
   // ---------------------------------------------------------------------------
   // Data
@@ -181,10 +174,10 @@ export default function PricingListDetailPage() {
     try {
       const [listResponse, skuGroupsResponse] = await Promise.all([
         api.get<PricingListDetail>(`/pricing-lists/${params.id}`),
-        api.get<PaginatedResponse<SkuGroup>>('/sku-groups'),
+        api.get<PaginatedResponse<SkuGroup>>('/sku-groups?limit=1000'),
       ]);
       setPricingList(listResponse);
-      setSkuGroups(skuGroupsResponse.data || []);
+      setAllSkuGroups(skuGroupsResponse.data || []);
     } catch (err) {
       console.error('Error fetching data:', err);
       setError(t('loadFailed'));
@@ -195,12 +188,43 @@ export default function PricingListDetailPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Groups currently assigned to the default rule — these are the only ones
+  // selectable when creating a new explicit rule (invariant: one rule per group).
+  const defaultRuleGroups = useMemo(() => {
+    if (!pricingList) return [];
+    const def = pricingList.rules.find((r) => r.isDefault);
+    return def?.skuGroups ?? [];
+  }, [pricingList]);
+
+  const filteredDefaultGroups = useMemo(() => {
+    const q = groupFilter.trim().toLowerCase();
+    if (!q) return defaultRuleGroups;
+    return defaultRuleGroups.filter(
+      (g) => g.code.toLowerCase().includes(q) || g.name.toLowerCase().includes(q)
+    );
+  }, [defaultRuleGroups, groupFilter]);
+
   // ---------------------------------------------------------------------------
   // Table columns
   // ---------------------------------------------------------------------------
 
   const columns: ColumnDef<PricingRule>[] = useMemo(
     () => [
+      {
+        accessorKey: 'isDefault',
+        header: '',
+        cell: ({ row }) =>
+          row.original.isDefault ? (
+            <Badge variant="default" className="text-xs gap-1">
+              <Star className="h-3 w-3" />
+              {t('detail.defaultBadge')}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-xs text-muted-foreground">
+              {t('detail.explicitBadge')}
+            </Badge>
+          ),
+      },
       {
         accessorKey: 'ruleType',
         header: t('detail.ruleType'),
@@ -211,29 +235,42 @@ export default function PricingListDetailPage() {
         ),
       },
       {
-        accessorKey: 'skuGroup',
+        accessorKey: 'skuGroups',
         header: t('detail.skuGroup'),
-        cell: ({ row }) =>
-          row.original.skuGroup ? (
-            <div>
-              <div className="font-medium text-sm">{row.original.skuGroup.name}</div>
-              <div className="text-xs text-muted-foreground">{row.original.skuGroup.code}</div>
+        cell: ({ row }) => {
+          const rule = row.original;
+          if (rule.isDefault) {
+            return (
+              <div className="text-sm">
+                <div className="text-muted-foreground">
+                  {t('detail.defaultCoversAll', { count: rule.skuGroups.length })}
+                </div>
+              </div>
+            );
+          }
+          const max = 3;
+          const shown = rule.skuGroups.slice(0, max);
+          const more = rule.skuGroups.length - shown.length;
+          return (
+            <div className="flex flex-wrap gap-1">
+              {shown.map((g) => (
+                <Badge key={g.id} variant="secondary" className="font-mono text-xs">
+                  {g.code}
+                </Badge>
+              ))}
+              {more > 0 && (
+                <Badge variant="outline" className="text-xs">
+                  +{more}
+                </Badge>
+              )}
             </div>
-          ) : (
-            <span className="text-muted-foreground text-sm">{t('detail.allSkus')}</span>
-          ),
+          );
+        },
       },
       {
         id: 'value',
         header: t('detail.value'),
-        cell: ({ row }) => formatRuleValue(row.original, t),
-      },
-      {
-        accessorKey: 'priority',
-        header: t('detail.priority'),
-        cell: ({ row }) => (
-          <span className="text-muted-foreground font-mono">{row.original.priority}</span>
-        ),
+        cell: ({ row }) => formatRuleValue(row.original),
       },
       {
         accessorKey: 'effectiveStart',
@@ -253,18 +290,19 @@ export default function PricingListDetailPage() {
       {
         id: 'actions',
         header: '',
-        cell: ({ row }) => (
-          <Can resource="customers" action="delete">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive hover:text-destructive"
-              onClick={() => handleDeleteClick(row.original)}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </Can>
-        ),
+        cell: ({ row }) =>
+          row.original.isDefault ? null : (
+            <Can resource="customers" action="delete">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => handleDeleteClick(row.original)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </Can>
+          ),
       },
     ],
     [t]
@@ -277,6 +315,23 @@ export default function PricingListDetailPage() {
   const pf = (patch: Partial<RuleFormData>) =>
     setFormData((f) => ({ ...f, ...patch }));
 
+  const toggleSkuGroup = (id: string) =>
+    setFormData((f) => ({
+      ...f,
+      skuGroupIds: f.skuGroupIds.includes(id)
+        ? f.skuGroupIds.filter((x) => x !== id)
+        : [...f.skuGroupIds, id],
+    }));
+
+  const selectAllVisible = () =>
+    setFormData((f) => ({
+      ...f,
+      skuGroupIds: Array.from(new Set([...f.skuGroupIds, ...filteredDefaultGroups.map((g) => g.id)])),
+    }));
+
+  const clearSelection = () =>
+    setFormData((f) => ({ ...f, skuGroupIds: [] }));
+
   const updateTier = (i: number, patch: Partial<TierRow>) =>
     setFormData((f) => {
       const tiers = [...f.tiers];
@@ -285,18 +340,11 @@ export default function PricingListDetailPage() {
     });
 
   const addTier = () =>
-    setFormData((f) => ({
-      ...f,
-      tiers: [...f.tiers, defaultTierRow()],
-    }));
+    setFormData((f) => ({ ...f, tiers: [...f.tiers, defaultTierRow()] }));
 
   const removeTier = (i: number) =>
-    setFormData((f) => ({
-      ...f,
-      tiers: f.tiers.filter((_, idx) => idx !== i),
-    }));
+    setFormData((f) => ({ ...f, tiers: f.tiers.filter((_, idx) => idx !== i) }));
 
-  // Auto-fill "from" of each tier from the "to" of the previous one
   const syncTierFrom = (i: number, toValue: string) => {
     setFormData((f) => {
       const tiers = [...f.tiers];
@@ -313,16 +361,20 @@ export default function PricingListDetailPage() {
   // ---------------------------------------------------------------------------
 
   const handleSubmit = async () => {
+    if (formData.skuGroupIds.length === 0) {
+      setError(t('detail.errors.atLeastOneGroup'));
+      return;
+    }
+
     setIsSaving(true);
     setError(null);
 
     try {
-      let payload: Record<string, unknown> = {
+      const payload: Record<string, unknown> = {
         ruleType: formData.ruleType,
-        skuGroupId: formData.skuGroupId || null,
+        skuGroupIds: formData.skuGroupIds,
         effectiveStart: formData.effectiveStart || null,
         effectiveEnd: formData.effectiveEnd || null,
-        priority: parseInt(formData.priority) || 100,
       };
 
       if (formData.ruleType === 'LIST_DISCOUNT') {
@@ -331,10 +383,9 @@ export default function PricingListDetailPage() {
       } else if (formData.ruleType === 'UNIT_PRICE') {
         payload.unitPrice = parseFloat(formData.unitPrice);
       } else {
-        // TIERED
         payload.tiers = formData.tiers
           .filter((t) => t.from !== '')
-          .map((t, i) => {
+          .map((t) => {
             const tier: Record<string, unknown> = {
               from: parseFloat(t.from) || 0,
               to: t.to ? parseFloat(t.to) : null,
@@ -405,6 +456,12 @@ export default function PricingListDetailPage() {
     );
   }
 
+  const totalGroups = allSkuGroups.length;
+  const explicitlyCoveredGroups = pricingList.rules
+    .filter((r) => !r.isDefault)
+    .reduce((acc, r) => acc + r.skuGroups.length, 0);
+  const defaultCoveredGroups = defaultRuleGroups.length;
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -438,6 +495,24 @@ export default function PricingListDetailPage() {
         </Alert>
       )}
 
+      {/* Coverage summary */}
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+          <div>
+            <span className="text-muted-foreground mr-2">{t('detail.coverage.total')}:</span>
+            <span className="font-semibold">{totalGroups}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground mr-2">{t('detail.coverage.default')}:</span>
+            <span className="font-semibold">{defaultCoveredGroups}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground mr-2">{t('detail.coverage.explicit')}:</span>
+            <span className="font-semibold">{explicitlyCoveredGroups}</span>
+          </div>
+        </div>
+      </Card>
+
       {/* Rules Section */}
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
@@ -449,8 +524,10 @@ export default function PricingListDetailPage() {
             <Button
               onClick={() => {
                 setFormData(defaultForm());
+                setGroupFilter('');
                 setShowAddModal(true);
               }}
+              disabled={defaultRuleGroups.length === 0}
             >
               <Plus className="h-4 w-4 mr-2" />
               {t('detail.addRule')}
@@ -477,7 +554,7 @@ export default function PricingListDetailPage() {
         size="lg"
       >
         <div className="space-y-5">
-          {/* Rule Type selector — 3 cards */}
+          {/* Rule Type selector */}
           <div>
             <Label className="text-sm font-medium mb-2 block">{t('detail.ruleType')}</Label>
             <div className="grid grid-cols-3 gap-2">
@@ -506,26 +583,70 @@ export default function PricingListDetailPage() {
             </div>
           </div>
 
-          {/* SKU Group */}
-          <div className="space-y-1.5">
-            <Label>{t('detail.skuGroup')}</Label>
-            <Select
-              value={formData.skuGroupId || 'all'}
-              onValueChange={(v) => pf({ skuGroupId: v === 'all' ? '' : v })}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder={t('detail.selectSkuGroup')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('detail.allSkus')}</SelectItem>
-                {skuGroups.map((g) => (
-                  <SelectItem key={g.id} value={g.id}>
-                    {g.name} ({g.code})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">{t('detail.skuGroupHint')}</p>
+          {/* SKU Groups multi-select */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>
+                {t('detail.skuGroupsSelect')}{' '}
+                <span className="text-muted-foreground font-normal">
+                  ({t('detail.selected', { n: formData.skuGroupIds.length, total: defaultRuleGroups.length })})
+                </span>
+              </Label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={selectAllVisible}
+                  className="text-xs text-primary hover:underline"
+                >
+                  {t('detail.selectAllVisible')}
+                </button>
+                <span className="text-xs text-muted-foreground">|</span>
+                <button
+                  type="button"
+                  onClick={clearSelection}
+                  className="text-xs text-primary hover:underline"
+                >
+                  {tc('clear')}
+                </button>
+              </div>
+            </div>
+            <Input
+              placeholder={t('detail.searchGroup')}
+              value={groupFilter}
+              onChange={(e) => setGroupFilter(e.target.value)}
+              className="h-9"
+            />
+            <div className="border rounded-lg max-h-64 overflow-y-auto">
+              {filteredDefaultGroups.length === 0 ? (
+                <div className="p-4 text-sm text-muted-foreground text-center">
+                  {defaultRuleGroups.length === 0
+                    ? t('detail.noGroupsInDefault')
+                    : t('detail.noGroupsMatch')}
+                </div>
+              ) : (
+                filteredDefaultGroups.map((g) => {
+                  const checked = formData.skuGroupIds.includes(g.id);
+                  return (
+                    <label
+                      key={g.id}
+                      className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-muted/40 border-b last:border-b-0 ${
+                        checked ? 'bg-primary/5' : ''
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleSkuGroup(g.id)}
+                        className="rounded"
+                      />
+                      <Badge variant="secondary" className="font-mono text-xs">{g.code}</Badge>
+                      <span className="text-sm text-muted-foreground">{g.name}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">{t('detail.skuGroupsHint')}</p>
           </div>
 
           {/* ---- LIST_DISCOUNT fields ---- */}
@@ -550,7 +671,7 @@ export default function PricingListDetailPage() {
                 </div>
                 {formData.discountPercent && (
                   <div className="text-sm text-muted-foreground whitespace-nowrap">
-                    = 客户实付列表价的{' '}
+                    {t('detail.discountPaysHint')}{' '}
                     <span className="font-semibold text-foreground">
                       {(100 - parseFloat(formData.discountPercent || '0')).toFixed(1)}%
                     </span>
@@ -600,7 +721,6 @@ export default function PricingListDetailPage() {
               <p className="text-xs text-muted-foreground">{t('detail.tiersHint')}</p>
 
               <div className="border rounded-lg overflow-hidden">
-                {/* Header */}
                 <div className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-0 bg-muted/50 text-xs font-medium text-muted-foreground">
                   <div className="px-3 py-2">{t('detail.tierFrom')} ($)</div>
                   <div className="px-3 py-2">{t('detail.tierTo')} ($)</div>
@@ -671,29 +791,10 @@ export default function PricingListDetailPage() {
                   </div>
                 ))}
               </div>
-
-              {/* Preview */}
-              {formData.tiers.some((t) => t.from !== '' && (t.rate || t.unitPrice)) && (
-                <div className="text-xs bg-muted/50 rounded px-3 py-2 space-y-0.5 font-mono">
-                  {formData.tiers
-                    .filter((t) => t.from !== '')
-                    .map((tier, i) => (
-                      <div key={i} className="text-muted-foreground">
-                        【${parseFloat(tier.from || '0').toLocaleString()}
-                        {tier.to ? `–$${parseFloat(tier.to).toLocaleString()}（不含）` : ' 以上'}】{' '}
-                        {tier.rate
-                          ? `列表价 × ${(100 - parseFloat(tier.rate)).toFixed(0)}%`
-                          : tier.unitPrice
-                          ? `固定单价 $${tier.unitPrice}`
-                          : '（未填写）'}
-                      </div>
-                    ))}
-                </div>
-              )}
             </div>
           )}
 
-          {/* Effective dates + priority */}
+          {/* Effective dates */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label htmlFor="effectiveStart">{t('detail.effectiveStart')}</Label>
@@ -715,24 +816,14 @@ export default function PricingListDetailPage() {
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="priority">{t('detail.priority')}</Label>
-            <Input
-              id="priority"
-              type="number"
-              value={formData.priority}
-              onChange={(e) => pf({ priority: e.target.value })}
-              min={0}
-              max={9999}
-            />
-            <p className="text-xs text-muted-foreground">{t('detail.priorityHint')}</p>
-          </div>
-
           <div className="flex justify-end gap-3 pt-2">
             <Button type="button" variant="outline" onClick={() => setShowAddModal(false)}>
               {tc('cancel')}
             </Button>
-            <Button onClick={handleSubmit} disabled={isSaving}>
+            <Button
+              onClick={handleSubmit}
+              disabled={isSaving || formData.skuGroupIds.length === 0}
+            >
               {isSaving ? tc('saving') : tc('add')}
             </Button>
           </div>
@@ -749,16 +840,21 @@ export default function PricingListDetailPage() {
         size="sm"
       >
         <div className="space-y-4">
-          <p className="text-muted-foreground">{t('detail.deleteRuleConfirm')}</p>
+          <p className="text-muted-foreground">
+            {t('detail.deleteRuleConfirm', { n: deletingRule?.skuGroups.length ?? 0 })}
+          </p>
           {deletingRule && (
-            <div className="bg-muted/50 rounded-lg p-3 text-sm">
-              <Badge variant={ruleTypeBadgeVariant(deletingRule.ruleType)} className="text-xs mb-1">
+            <div className="bg-muted/50 rounded-lg p-3 text-sm space-y-2">
+              <Badge variant={ruleTypeBadgeVariant(deletingRule.ruleType)} className="text-xs">
                 {t(`detail.ruleTypes.${deletingRule.ruleType}` as never)}
               </Badge>
-              <div className="text-muted-foreground">
-                {deletingRule.skuGroup
-                  ? `${deletingRule.skuGroup.name} (${deletingRule.skuGroup.code})`
-                  : t('detail.allSkus')}
+              <div className="flex flex-wrap gap-1">
+                {deletingRule.skuGroups.slice(0, 8).map((g) => (
+                  <Badge key={g.id} variant="secondary" className="font-mono text-xs">{g.code}</Badge>
+                ))}
+                {deletingRule.skuGroups.length > 8 && (
+                  <Badge variant="outline" className="text-xs">+{deletingRule.skuGroups.length - 8}</Badge>
+                )}
               </div>
             </div>
           )}

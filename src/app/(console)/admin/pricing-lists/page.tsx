@@ -26,6 +26,7 @@ interface PricingListFormData {
   name: string;
   customerId: string;
   status: string;
+  defaultDiscountPercent: string; // for create only — sets the default rule
 }
 
 export default function PricingListsPage() {
@@ -44,6 +45,7 @@ export default function PricingListsPage() {
     name: '',
     customerId: '',
     status: 'ACTIVE',
+    defaultDiscountPercent: '0',
   });
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -159,6 +161,7 @@ export default function PricingListsPage() {
       name: list.name,
       customerId: list.customer.id,
       status: list.status,
+      defaultDiscountPercent: '0',
     });
     setShowModal(true);
   };
@@ -192,6 +195,7 @@ export default function PricingListsPage() {
       name: '',
       customerId: '',
       status: 'ACTIVE',
+      defaultDiscountPercent: '0',
     });
     setShowModal(true);
   };
@@ -210,6 +214,7 @@ export default function PricingListsPage() {
         await api.post('/pricing-lists', {
           name: formData.name,
           customerId: formData.customerId,
+          defaultDiscountPercent: parseFloat(formData.defaultDiscountPercent) || 0,
         });
       }
       setShowModal(false);
@@ -313,6 +318,27 @@ export default function PricingListsPage() {
               placeholder={t('placeholders.name')}
             />
           </div>
+
+          {!editingList && (
+            <div className="space-y-2">
+              <Label htmlFor="defaultDiscountPercent">{t('defaultDiscountPercent')} *</Label>
+              <div className="relative">
+                <Input
+                  id="defaultDiscountPercent"
+                  type="number"
+                  value={formData.defaultDiscountPercent}
+                  onChange={(e) => setFormData({ ...formData, defaultDiscountPercent: e.target.value })}
+                  min={0}
+                  max={100}
+                  step={0.1}
+                  required
+                  className="pr-8"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">%</span>
+              </div>
+              <p className="text-xs text-muted-foreground">{t('defaultDiscountHint')}</p>
+            </div>
+          )}
 
           {editingList && (
             <div className="space-y-2">

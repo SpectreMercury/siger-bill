@@ -67,7 +67,7 @@ export const GET = withPermission(
             _count: {
               select: {
                 skuGroupMappings: true,
-                pricingRules: true,
+                pricingRuleGroups: true,
               },
             },
           },
@@ -82,7 +82,7 @@ export const GET = withPermission(
         name: group.name,
         description: group.description,
         skuCount: group._count.skuGroupMappings,
-        ruleCount: group._count.pricingRules,
+        ruleCount: group._count.pricingRuleGroups,
         createdAt: group.createdAt,
         updatedAt: group.updatedAt,
       }));

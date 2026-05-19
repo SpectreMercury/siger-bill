@@ -164,6 +164,13 @@ const customerSection: NavSection = {
       adminOnly: true,
     },
     {
+      nameKey: 'customer.projectBillingConfigs',
+      href: '/admin/project-billing-configs',
+      icon: <Link2 className="h-4 w-4" />,
+      permission: { resource: 'project_billing_configs', action: 'read' },
+      adminOnly: true,
+    },
+    {
       nameKey: 'customer.credits',
       href: '/admin/credits',
       icon: <CreditCard className="h-4 w-4" />,
