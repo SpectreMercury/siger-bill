@@ -2,7 +2,7 @@
  * GCP Auth Helper
  *
  * Loads GCP credentials from the database (GcpConnection model).
- * Supports SERVICE_ACCOUNT and API_KEY auth types.
+ * Supports SERVICE_ACCOUNT, API_KEY, and APPLICATION_DEFAULT auth types.
  *
  * Priority for each request:
  *  1. Specified connectionId → load that connection
@@ -84,6 +84,35 @@ async function exchangeServiceAccountToken(
   }
 }
 
+async function exchangeApplicationDefaultToken(cacheKey: string): Promise<string | null> {
+  const cached = _tokenCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) return cached.token;
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { GoogleAuth } = require('google-auth-library');
+    const auth = new GoogleAuth({
+      scopes: [
+        'https://www.googleapis.com/auth/cloud-billing.readonly',
+        'https://www.googleapis.com/auth/cloud-platform.read-only',
+      ],
+    });
+    const client = await auth.getClient();
+    const tokenResponse = await client.getAccessToken();
+    const token = typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token;
+    if (!token) return null;
+
+    _tokenCache.set(cacheKey, {
+      token,
+      expiresAt: Date.now() + 50 * 60 * 1000,
+    });
+    return token;
+  } catch (err) {
+    console.error('GCP ADC token exchange failed:', err);
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public: get headers from a DB connection
 // ---------------------------------------------------------------------------
@@ -121,6 +150,10 @@ export async function gcpFetchHeaders(connectionId?: string): Promise<HeadersIni
     if (conn.authType === 'API_KEY') {
       const creds = conn.credentials as unknown as ApiKeyCreds;
       if (creds.key) return { 'X-Goog-Api-Key': creds.key, Accept: 'application/json' };
+    }
+    if (conn.authType === 'APPLICATION_DEFAULT') {
+      const token = await exchangeApplicationDefaultToken(conn.id);
+      if (token) return { Authorization: `Bearer ${token}`, Accept: 'application/json' };
     }
   }
 

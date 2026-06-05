@@ -1,0 +1,4 @@
+ALTER TYPE "gcp_auth_type" ADD VALUE IF NOT EXISTS 'APPLICATION_DEFAULT';
+
+ALTER TABLE "gcp_connections"
+  ADD COLUMN IF NOT EXISTS "billing_job_project_id" VARCHAR(255);

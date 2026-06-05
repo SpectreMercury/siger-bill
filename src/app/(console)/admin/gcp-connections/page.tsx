@@ -39,8 +39,9 @@ interface GcpConnection {
   name: string;
   description: string | null;
   group: string;
-  authType: 'SERVICE_ACCOUNT' | 'API_KEY';
+  authType: GcpAuthType;
   billingProjectId: string | null;
+  billingJobProjectId: string | null;
   billingDatasetId: string | null;
   billingTableName: string | null;
   billingAccountIds: string[];
@@ -54,14 +55,16 @@ interface GcpConnection {
 type TestState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'success'; message: string; accounts: Array<{ billingAccountId: string; displayName: string }> }
+  | { status: 'success'; message: string }
   | { status: 'error'; error: string };
+
+type GcpAuthType = 'SERVICE_ACCOUNT' | 'API_KEY' | 'APPLICATION_DEFAULT';
 
 interface FormData {
   name: string;
   description: string;
   group: string;
-  authType: 'SERVICE_ACCOUNT' | 'API_KEY';
+  authType: GcpAuthType;
   // SERVICE_ACCOUNT fields
   clientEmail: string;
   privateKey: string;
@@ -70,6 +73,7 @@ interface FormData {
   apiKey: string;
   // BigQuery billing config
   billingProjectId: string;
+  billingJobProjectId: string;
   billingDatasetId: string;
   billingTableName: string;
   billingAccountIds: string;
@@ -87,6 +91,7 @@ const DEFAULT_FORM: FormData = {
   pasteJson: '',
   apiKey: '',
   billingProjectId: '',
+  billingJobProjectId: '',
   billingDatasetId: '',
   billingTableName: '',
   billingAccountIds: '',
@@ -205,6 +210,7 @@ export default function GcpConnectionsPage() {
       pasteJson: '',
       apiKey: '',
       billingProjectId: conn.billingProjectId ?? '',
+      billingJobProjectId: conn.billingJobProjectId ?? '',
       billingDatasetId: conn.billingDatasetId ?? '',
       billingTableName: conn.billingTableName ?? '',
       billingAccountIds: (conn.billingAccountIds ?? []).join(', '),
@@ -218,6 +224,9 @@ export default function GcpConnectionsPage() {
     if (formData.authType === 'SERVICE_ACCOUNT') {
       return { client_email: formData.clientEmail, private_key: formData.privateKey };
     }
+    if (formData.authType === 'APPLICATION_DEFAULT') {
+      return {};
+    }
     return { key: formData.apiKey };
   };
 
@@ -229,7 +238,11 @@ export default function GcpConnectionsPage() {
         : [];
 
       // Auto-fill name and group if empty
-      const autoName = formData.name || formData.clientEmail?.split('@')[0] || `connection-${Date.now()}`;
+      const autoName =
+        formData.name ||
+        formData.clientEmail?.split('@')[0] ||
+        formData.billingProjectId ||
+        `connection-${Date.now()}`;
       const autoGroup = formData.group || 'default';
 
       const payload = {
@@ -239,6 +252,7 @@ export default function GcpConnectionsPage() {
         authType: formData.authType,
         credentials: buildCredentials(),
         billingProjectId: formData.billingProjectId || null,
+        billingJobProjectId: formData.billingJobProjectId || null,
         billingDatasetId: formData.billingDatasetId || null,
         billingTableName: formData.billingTableName || null,
         billingAccountIds: billingAccountIdsArray,
@@ -248,9 +262,11 @@ export default function GcpConnectionsPage() {
 
       if (editingId) {
         // Only send credentials if user filled them in
-        const creds = formData.authType === 'SERVICE_ACCOUNT'
-          ? (formData.clientEmail && formData.privateKey ? buildCredentials() : undefined)
-          : (formData.apiKey ? buildCredentials() : undefined);
+        const creds = formData.authType === 'APPLICATION_DEFAULT'
+          ? {}
+          : formData.authType === 'SERVICE_ACCOUNT'
+            ? (formData.clientEmail && formData.privateKey ? buildCredentials() : undefined)
+            : (formData.apiKey ? buildCredentials() : undefined);
 
         await api.put(`/admin/gcp-connections/${editingId}`, {
           ...payload,
@@ -304,7 +320,8 @@ export default function GcpConnectionsPage() {
   // ---------------------------------------------------------------------------
 
   const handleTest = async (conn: GcpConnection) => {
-    setTestStates((prev) => ({ ...prev, [conn.id]: { status: 'loading' } }));
+    const key = `${conn.id}:gcp`;
+    setTestStates((prev) => ({ ...prev, [key]: { status: 'loading' } }));
     try {
       const res = await api.post<{
         ok: boolean;
@@ -316,18 +333,49 @@ export default function GcpConnectionsPage() {
       if (res.ok) {
         setTestStates((prev) => ({
           ...prev,
-          [conn.id]: { status: 'success', message: res.message ?? 'OK', accounts: res.billingAccounts ?? [] },
+          [key]: { status: 'success', message: res.message ?? 'OK' },
         }));
       } else {
         setTestStates((prev) => ({
           ...prev,
-          [conn.id]: { status: 'error', error: res.error ?? 'Unknown error' },
+          [key]: { status: 'error', error: res.error ?? 'Unknown error' },
         }));
       }
     } catch (err: unknown) {
       setTestStates((prev) => ({
         ...prev,
-        [conn.id]: { status: 'error', error: err instanceof Error ? err.message : 'Test failed' },
+        [key]: { status: 'error', error: err instanceof Error ? err.message : 'Test failed' },
+      }));
+    }
+  };
+
+  const handleTestBigQuery = async (conn: GcpConnection) => {
+    const key = `${conn.id}:bigquery`;
+    setTestStates((prev) => ({ ...prev, [key]: { status: 'loading' } }));
+    try {
+      const res = await api.post<{
+        ok: boolean;
+        message?: string;
+        error?: string;
+        accounts?: Array<{ id: string; name: string }>;
+      }>(`/admin/gcp-connections/${conn.id}/test-bigquery`, {});
+
+      if (res.ok) {
+        const count = res.accounts?.length ?? 0;
+        setTestStates((prev) => ({
+          ...prev,
+          [key]: { status: 'success', message: res.message ?? `BigQuery OK (${count})` },
+        }));
+      } else {
+        setTestStates((prev) => ({
+          ...prev,
+          [key]: { status: 'error', error: res.error ?? 'Unknown error' },
+        }));
+      }
+    } catch (err: unknown) {
+      setTestStates((prev) => ({
+        ...prev,
+        [key]: { status: 'error', error: err instanceof Error ? err.message : 'BigQuery test failed' },
       }));
     }
   };
@@ -340,12 +388,18 @@ export default function GcpConnectionsPage() {
     if (type === 'SERVICE_ACCOUNT')
       return (
         <Badge variant="secondary" className="gap-1">
-          <Server className="h-3 w-3" /> Service Account
+          <Server className="h-3 w-3" /> {t('authTypes.serviceAccount')}
+        </Badge>
+      );
+    if (type === 'APPLICATION_DEFAULT')
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <Server className="h-3 w-3" /> {t('authTypes.applicationDefault')}
         </Badge>
       );
     return (
       <Badge variant="outline" className="gap-1">
-        <KeyRound className="h-3 w-3" /> API Key
+        <KeyRound className="h-3 w-3" /> {t('authTypes.apiKey')}
       </Badge>
     );
   };
@@ -395,21 +449,42 @@ export default function GcpConnectionsPage() {
           {conn.description && (
             <p className="text-xs text-muted-foreground mt-1">{conn.description}</p>
           )}
+          {conn.billingProjectId && conn.billingDatasetId && conn.billingTableName && (
+            <p className="text-xs text-muted-foreground mt-1 font-mono truncate">
+              {conn.billingProjectId}.{conn.billingDatasetId}.{conn.billingTableName}
+              {conn.billingJobProjectId ? ` · job ${conn.billingJobProjectId}` : ''}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => handleTest(conn)}
-            disabled={testStates[conn.id]?.status === 'loading'}
+            disabled={testStates[`${conn.id}:gcp`]?.status === 'loading'}
           >
-            {testStates[conn.id]?.status === 'loading' ? (
+            {testStates[`${conn.id}:gcp`]?.status === 'loading' ? (
               <Loader2 className="h-3 w-3 animate-spin mr-1" />
             ) : (
               <FlaskConical className="h-3 w-3 mr-1" />
             )}
             {t('test')}
           </Button>
+          {conn.billingProjectId && conn.billingDatasetId && conn.billingTableName && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleTestBigQuery(conn)}
+              disabled={testStates[`${conn.id}:bigquery`]?.status === 'loading'}
+            >
+              {testStates[`${conn.id}:bigquery`]?.status === 'loading' ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              ) : (
+                <Database className="h-3 w-3 mr-1" />
+              )}
+              {t('testBigQuery')}
+            </Button>
+          )}
           {!conn.isDefault && (
             <Button variant="ghost" size="sm" onClick={() => handleSetDefault(conn)}>
               <StarOff className="h-3 w-3 mr-1" />
@@ -430,7 +505,8 @@ export default function GcpConnectionsPage() {
           </Button>
         </div>
       </div>
-      {renderTestResult(conn.id)}
+      {renderTestResult(`${conn.id}:gcp`)}
+      {renderTestResult(`${conn.id}:bigquery`)}
     </div>
   );
 
@@ -514,7 +590,21 @@ export default function GcpConnectionsPage() {
           onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}
           className="space-y-4"
         >
-          {/* Step 1: Paste service account JSON — the ONLY required action */}
+          <div className="space-y-1">
+            <Label htmlFor="auth-type">{t('fields.authType')}</Label>
+            <select
+              id="auth-type"
+              value={formData.authType}
+              onChange={(e) => setFormData((p) => ({ ...p, authType: e.target.value as GcpAuthType }))}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="SERVICE_ACCOUNT">{t('authTypes.serviceAccount')}</option>
+              <option value="APPLICATION_DEFAULT">{t('authTypes.applicationDefault')}</option>
+              <option value="API_KEY">{t('authTypes.apiKey')}</option>
+            </select>
+          </div>
+
+          {formData.authType === 'SERVICE_ACCOUNT' && (
           <div className="space-y-2">
             <Label htmlFor="paste-json">
               {editingId ? t('fields.pasteJson') : `${t('fields.pasteJson')} *`}
@@ -526,8 +616,8 @@ export default function GcpConnectionsPage() {
               value={formData.pasteJson}
               onChange={(e) => handlePasteJson(e.target.value)}
               className="font-mono text-xs"
+              required={!editingId}
             />
-            {/* Show extracted info */}
             {formData.clientEmail && (
               <div className="flex items-center gap-2 text-xs text-green-600">
                 <CheckCircle2 className="h-3 w-3" />
@@ -535,9 +625,32 @@ export default function GcpConnectionsPage() {
               </div>
             )}
           </div>
+          )}
 
-          {/* Step 2: BigQuery billing table — 2 fields (project auto-filled from JSON) */}
-          <div className="grid grid-cols-2 gap-3">
+          {formData.authType === 'API_KEY' && (
+            <div className="space-y-1">
+              <Label htmlFor="api-key">{t('fields.apiKey')}</Label>
+              <Input
+                id="api-key"
+                value={formData.apiKey}
+                onChange={(e) => setFormData((p) => ({ ...p, apiKey: e.target.value }))}
+                placeholder={editingId ? t('placeholders.apiKeyEdit') : t('fields.apiKey')}
+                required={!editingId}
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="billing-project">{t('fields.billingProjectId')} *</Label>
+              <Input
+                id="billing-project"
+                value={formData.billingProjectId}
+                onChange={(e) => setFormData((p) => ({ ...p, billingProjectId: e.target.value }))}
+                placeholder={t('placeholders.billingProjectId')}
+                required={!editingId}
+              />
+            </div>
             <div className="space-y-1">
               <Label htmlFor="billing-dataset">{t('fields.billingDatasetId')} *</Label>
               <Input
@@ -558,6 +671,16 @@ export default function GcpConnectionsPage() {
                 required={!editingId}
               />
             </div>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="billing-job-project">{t('fields.billingJobProjectId')}</Label>
+            <Input
+              id="billing-job-project"
+              value={formData.billingJobProjectId}
+              onChange={(e) => setFormData((p) => ({ ...p, billingJobProjectId: e.target.value }))}
+              placeholder={t('placeholders.billingJobProjectId')}
+            />
+            <p className="text-xs text-muted-foreground">{t('hints.billingJobProjectId')}</p>
           </div>
 
           {/* Advanced: collapsed by default, for power users */}
@@ -589,16 +712,6 @@ export default function GcpConnectionsPage() {
                     {existingGroups.map((g) => <option key={g} value={g} />)}
                   </datalist>
                 )}
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="billing-project">{t('fields.billingProjectId')}</Label>
-                <Input
-                  id="billing-project"
-                  value={formData.billingProjectId}
-                  onChange={(e) => setFormData((p) => ({ ...p, billingProjectId: e.target.value }))}
-                  placeholder={t('placeholders.billingProjectId')}
-                />
-                <p className="text-xs text-muted-foreground">{t('hints.billingProjectAutoFill') ?? 'Auto-filled from JSON'}</p>
               </div>
               <div className="space-y-1">
                 <Label htmlFor="billing-accounts">{t('fields.billingAccountIds')}</Label>

@@ -1237,6 +1237,7 @@ model Payment {
 enum GcpAuthType {
   SERVICE_ACCOUNT // Full service account JSON credentials
   API_KEY // Simple API key (for public endpoints)
+  APPLICATION_DEFAULT // Server-side Google Application Default Credentials
 
   @@map("gcp_auth_type")
 }
@@ -1244,25 +1245,26 @@ enum GcpAuthType {
 /// Stored GCP API credentials managed by super admins.
 /// Supports multiple connections grouped by environment/purpose.
 model GcpConnection {
-  id                String      @id @default(uuid()) @db.Uuid
-  name              String      @db.VarChar(255) // e.g. "生产主账号"
-  description       String?     @db.Text
-  group             String      @default("default") @db.VarChar(100) // e.g. "生产环境", "测试环境"
-  authType          GcpAuthType @map("auth_type")
+  id                  String      @id @default(uuid()) @db.Uuid
+  name                String      @db.VarChar(255) // e.g. "生产主账号"
+  description         String?     @db.Text
+  group               String      @default("default") @db.VarChar(100) // e.g. "生产环境", "测试环境"
+  authType            GcpAuthType @map("auth_type")
   /// Credential payload (type-specific JSON):
   ///   SERVICE_ACCOUNT: { client_email, private_key }
   ///   API_KEY:         { key }
-  credentials       Json        @db.JsonB
+  credentials         Json        @db.JsonB
   /// BigQuery billing export configuration (optional):
-  billingProjectId  String?     @map("billing_project_id") @db.VarChar(255) // GCP project containing BQ dataset
-  billingDatasetId  String?     @map("billing_dataset_id") @db.VarChar(255) // BQ dataset name
-  billingTableName  String?     @map("billing_table_name") @db.VarChar(255) // e.g. gcp_billing_export_v1_XXXXXX
-  billingAccountIds String[]    @default([]) @map("billing_account_ids") // Filter specific billing accounts
-  isDefault         Boolean     @default(false) @map("is_default") // Used as fallback by GCP auth module
-  isActive          Boolean     @default(true) @map("is_active")
-  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime    @updatedAt @map("updated_at") @db.Timestamptz
-  createdById       String?     @map("created_by_id") @db.Uuid
+  billingProjectId    String?     @map("billing_project_id") @db.VarChar(255) // GCP project containing BQ dataset
+  billingJobProjectId String?     @map("billing_job_project_id") @db.VarChar(255) // GCP project used to run BigQuery jobs
+  billingDatasetId    String?     @map("billing_dataset_id") @db.VarChar(255) // BQ dataset name
+  billingTableName    String?     @map("billing_table_name") @db.VarChar(255) // e.g. gcp_billing_export_v1_XXXXXX
+  billingAccountIds   String[]    @default([]) @map("billing_account_ids") // Filter specific billing accounts
+  isDefault           Boolean     @default(false) @map("is_default") // Used as fallback by GCP auth module
+  isActive            Boolean     @default(true) @map("is_active")
+  createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+  createdById         String?     @map("created_by_id") @db.Uuid
 
   createdBy User?      @relation("GcpConnectionCreator", fields: [createdById], references: [id], onDelete: SetNull)
   customers Customer[] @relation("CustomerGcpConnection")

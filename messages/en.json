@@ -1156,6 +1156,7 @@
     "connections": "connections",
     "default": "Default",
     "test": "Test",
+    "testBigQuery": "Test BigQuery",
     "setDefault": "Set Default",
     "testing": "Testing...",
     "noConnections": "No GCP connections yet. Click the button below to add your first connection.",
@@ -1180,6 +1181,7 @@
       "isDefault": "Set as Default",
       "isActive": "Active",
       "billingProjectId": "BigQuery Project ID",
+      "billingJobProjectId": "BigQuery Job Project ID",
       "billingDatasetId": "BigQuery Dataset",
       "billingTableName": "BigQuery Table Name",
       "billingAccountIds": "Billing Account ID Filter"
@@ -1192,6 +1194,7 @@
       "privateKeyEdit": "Leave blank to keep the existing key",
       "apiKeyEdit": "Leave blank to keep the existing key",
       "billingProjectId": "GCP project ID where BigQuery dataset resides",
+      "billingJobProjectId": "GCP project ID used to run BigQuery queries",
       "billingDatasetId": "Billing export dataset name",
       "billingTableName": "e.g. gcp_billing_export_v1_XXXXXX",
       "billingAccountIds": "XXXXXX-XXXXXX-XXXXXX (comma separated)"
@@ -1202,7 +1205,13 @@
       "privateKeyEdit": "Leave blank to keep the current private key unchanged.",
       "apiKeyEdit": "Leave blank to keep the current API key unchanged.",
       "billingConfig": "Configure BigQuery billing export to enable automatic cost data fetching. Requires Billing Export → BigQuery enabled in GCP Console.",
+      "billingJobProjectId": "Optional. For shared datasets, use a project where this credential has bigquery.jobs.create. Defaults to the BigQuery project ID.",
       "billingAccountIds": "Optional. Leave empty to query all billing accounts."
+    },
+    "authTypes": {
+      "serviceAccount": "Service Account JSON",
+      "applicationDefault": "Local ADC",
+      "apiKey": "API Key"
     },
     "advancedSettings": "Advanced settings",
     "billingConfig": "BigQuery Billing Config",

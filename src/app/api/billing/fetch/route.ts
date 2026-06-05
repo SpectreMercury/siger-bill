@@ -83,6 +83,7 @@ export const POST = withPermission(
         id: string;
         name: string;
         billingProjectId: string | null;
+        billingJobProjectId: string | null;
         billingDatasetId: string | null;
         billingTableName: string | null;
         billingAccountIds: string[];

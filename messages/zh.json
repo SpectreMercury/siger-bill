@@ -1156,6 +1156,7 @@
     "connections": "个连接",
     "default": "默认",
     "test": "测试",
+    "testBigQuery": "测试 BigQuery",
     "setDefault": "设为默认",
     "testing": "测试中...",
     "noConnections": "暂无 GCP 连接，点击下方按钮添加第一个连接",
@@ -1180,6 +1181,7 @@
       "isDefault": "设为默认",
       "isActive": "启用",
       "billingProjectId": "BigQuery 项目 ID",
+      "billingJobProjectId": "BigQuery Job 项目 ID",
       "billingDatasetId": "BigQuery Dataset",
       "billingTableName": "BigQuery 表名",
       "billingAccountIds": "账单账户 ID 过滤"
@@ -1192,6 +1194,7 @@
       "privateKeyEdit": "留空保持原密钥不变",
       "apiKeyEdit": "留空保持原密钥不变",
       "billingProjectId": "BigQuery 所在 GCP 项目 ID",
+      "billingJobProjectId": "运行 BigQuery 查询的 GCP 项目 ID",
       "billingDatasetId": "账单导出 Dataset 名称",
       "billingTableName": "如：gcp_billing_export_v1_XXXXXX",
       "billingAccountIds": "XXXXXX-XXXXXX-XXXXXX（多个用逗号分隔）"
@@ -1202,7 +1205,13 @@
       "privateKeyEdit": "如不需要更换密钥，留空即可",
       "apiKeyEdit": "如不需要更换密钥，留空即可",
       "billingConfig": "配置 BigQuery 账单导出信息，用于自动拉取费用数据。需先在 GCP Console 开启 Billing Export → BigQuery",
+      "billingJobProjectId": "可选。共享数据集场景下，填写拥有 bigquery.jobs.create 权限的项目；留空则使用 BigQuery 项目 ID。",
       "billingAccountIds": "可选，留空则查询所有账单账户的数据"
+    },
+    "authTypes": {
+      "serviceAccount": "服务账号 JSON",
+      "applicationDefault": "本机 ADC",
+      "apiKey": "API Key"
     },
     "advancedSettings": "高级设置",
     "billingConfig": "BigQuery 账单配置",

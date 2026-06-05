@@ -141,8 +141,11 @@ export interface BillingSourceAdapter {
  * Configuration for GCP BigQuery adapter
  */
 export interface GcpBigQueryAdapterConfig {
-  /** BigQuery project ID */
+  /** BigQuery project ID containing the billing export table */
   projectId: string;
+
+  /** Optional: GCP project used to run BigQuery jobs */
+  jobProjectId?: string;
 
   /** BigQuery dataset containing billing export */
   datasetId: string;

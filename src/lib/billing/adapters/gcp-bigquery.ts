@@ -82,6 +82,40 @@ interface GcpBillingExportRow {
   } | null;
 }
 
+interface BigQueryBillingQuery {
+  query: string;
+  params: {
+    invoiceMonth: string;
+    billingAccountIds?: string[];
+  };
+}
+
+function loadServiceAccountFromEnv(): GcpBigQueryAdapterConfig['credentials'] | undefined {
+  const rawJson = process.env.GCP_SERVICE_ACCOUNT_JSON;
+  if (!rawJson) return undefined;
+
+  const candidates = [
+    rawJson,
+    Buffer.from(rawJson, 'base64').toString('utf-8'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as { client_email?: string; private_key?: string };
+      if (parsed.client_email && parsed.private_key) {
+        return {
+          client_email: parsed.client_email,
+          private_key: parsed.private_key,
+        };
+      }
+    } catch {
+      // Try the next encoding.
+    }
+  }
+
+  throw new Error('GCP_SERVICE_ACCOUNT_JSON must be valid service account JSON or base64-encoded JSON.');
+}
+
 export class GcpBigQueryAdapter implements BillingSourceAdapter {
   readonly provider = BillingProvider.GCP;
   readonly sourceType = BillingSourceType.BIGQUERY_EXPORT;
@@ -107,14 +141,21 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
       const bigqueryModule = require('@google-cloud/bigquery');
       const BigQuery = bigqueryModule.BigQuery;
 
-      // Prefer inline credentials (from DB) over key file path (from env)
+      // BigQuery jobs can run in a different project than the shared billing table.
       const options: Record<string, unknown> = {
-        projectId: this.config.projectId,
+        projectId: this.config.jobProjectId || this.config.projectId,
       };
 
       if (this.config.credentials) {
         options.credentials = this.config.credentials;
-      } else if (this.config.keyFilePath) {
+      } else {
+        const envCredentials = loadServiceAccountFromEnv();
+        if (envCredentials) {
+          options.credentials = envCredentials;
+        }
+      }
+
+      if (!options.credentials && this.config.keyFilePath) {
         options.keyFilename = this.config.keyFilePath;
       }
 
@@ -131,7 +172,10 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
     const { month, accountIds, options } = params;
 
     // Build the query
-    const query = this.buildQuery(month, accountIds || this.config.billingAccountIds);
+    const { query, params: queryParams } = this.buildQuery(
+      month,
+      accountIds || this.config.billingAccountIds
+    );
 
     // Get BigQuery client
     const bigquery = await this.getBigQueryClient();
@@ -139,6 +183,7 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
     // Execute query
     const [rows] = await bigquery.query({
       query,
+      params: queryParams,
       location: 'US', // BigQuery billing exports are typically in US
       ...(options?.maxResults ? { maxResults: options.maxResults as number } : {}),
     });
@@ -155,7 +200,9 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
       checksum,
       sourceMetadata: {
         query,
+        queryParams,
         source: `${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}`,
+        jobProjectId: this.config.jobProjectId || this.config.projectId,
         dataRange: {
           start: `${month}-01`,
           end: this.getMonthEndDate(month),
@@ -174,7 +221,7 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
         FROM \`${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}\`
         LIMIT 1
       `;
-      await bigquery.query({ query });
+      await bigquery.query({ query, location: 'US' });
       return true;
     } catch (error) {
       console.error('GCP BigQuery connection validation failed:', error);
@@ -189,28 +236,29 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
         billing_account_id as id,
         billing_account_id as name
       FROM \`${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}\`
-      WHERE _PARTITIONTIME >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY)
+      WHERE invoice.month >= FORMAT_DATE('%Y%m', DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY))
+      ORDER BY billing_account_id
     `;
 
-    const [rows] = await bigquery.query({ query });
+    const [rows] = await bigquery.query({ query, location: 'US' });
     return rows as Array<{ id: string; name: string }>;
   }
 
   /**
    * Build BigQuery SQL for fetching billing data
    */
-  private buildQuery(month: string, billingAccountIds?: string[]): string {
+  private buildQuery(month: string, billingAccountIds?: string[]): BigQueryBillingQuery {
     const [year, monthNum] = month.split('-').map(Number);
-    const startDate = `${year}-${String(monthNum).padStart(2, '0')}-01`;
-    const endDate = this.getMonthEndDate(month);
+    const invoiceMonth = `${year}${String(monthNum).padStart(2, '0')}`;
+    const queryParams: BigQueryBillingQuery['params'] = { invoiceMonth };
 
     let accountFilter = '';
     if (billingAccountIds && billingAccountIds.length > 0) {
-      const accounts = billingAccountIds.map((a) => `'${a}'`).join(', ');
-      accountFilter = `AND billing_account_id IN (${accounts})`;
+      accountFilter = 'AND billing_account_id IN UNNEST(@billingAccountIds)';
+      queryParams.billingAccountIds = billingAccountIds;
     }
 
-    return `
+    const query = `
       SELECT
         billing_account_id,
         service,
@@ -231,12 +279,12 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
         cost_type,
         adjustment_info
       FROM \`${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}\`
-      WHERE invoice.month = '${year}${String(monthNum).padStart(2, '0')}'
-        AND usage_start_time >= TIMESTAMP('${startDate}')
-        AND usage_start_time < TIMESTAMP('${endDate}') + INTERVAL 1 DAY
+      WHERE invoice.month = @invoiceMonth
         ${accountFilter}
       ORDER BY usage_start_time
     `;
+
+    return { query, params: queryParams };
   }
 
   /**
@@ -316,6 +364,7 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
  */
 export function createGcpBigQueryAdapterFromConnection(connection: {
   billingProjectId: string | null;
+  billingJobProjectId?: string | null;
   billingDatasetId: string | null;
   billingTableName: string | null;
   billingAccountIds: string[];
@@ -328,22 +377,31 @@ export function createGcpBigQueryAdapterFromConnection(connection: {
     );
   }
 
-  if (connection.authType !== 'SERVICE_ACCOUNT') {
-    throw new Error('BigQuery billing adapter requires a SERVICE_ACCOUNT connection type.');
-  }
-
-  const creds = connection.credentials as { client_email: string; private_key: string };
-  if (!creds.client_email || !creds.private_key) {
-    throw new Error('SERVICE_ACCOUNT credentials must include client_email and private_key.');
-  }
-
-  return new GcpBigQueryAdapter({
+  const config: GcpBigQueryAdapterConfig = {
     projectId: connection.billingProjectId,
+    jobProjectId: connection.billingJobProjectId || undefined,
     datasetId: connection.billingDatasetId,
     tableName: connection.billingTableName,
-    credentials: { client_email: creds.client_email, private_key: creds.private_key },
     billingAccountIds: connection.billingAccountIds.length > 0 ? connection.billingAccountIds : undefined,
-  });
+  };
+
+  if (connection.authType === 'SERVICE_ACCOUNT') {
+    const creds = connection.credentials as { client_email: string; private_key: string };
+    if (!creds.client_email || !creds.private_key) {
+      throw new Error('SERVICE_ACCOUNT credentials must include client_email and private_key.');
+    }
+
+    return new GcpBigQueryAdapter({
+      ...config,
+      credentials: { client_email: creds.client_email, private_key: creds.private_key },
+    });
+  }
+
+  if (connection.authType === 'APPLICATION_DEFAULT') {
+    return new GcpBigQueryAdapter(config);
+  }
+
+  throw new Error('BigQuery billing adapter requires SERVICE_ACCOUNT or APPLICATION_DEFAULT auth.');
 }
 
 /**
@@ -351,6 +409,7 @@ export function createGcpBigQueryAdapterFromConnection(connection: {
  */
 export function createGcpBigQueryAdapterFromEnv(): GcpBigQueryAdapter {
   const projectId = process.env.GCP_BILLING_PROJECT_ID;
+  const jobProjectId = process.env.GCP_BILLING_JOB_PROJECT_ID;
   const datasetId = process.env.GCP_BILLING_DATASET_ID;
   const tableName = process.env.GCP_BILLING_TABLE_NAME;
 
@@ -362,8 +421,10 @@ export function createGcpBigQueryAdapterFromEnv(): GcpBigQueryAdapter {
 
   return new GcpBigQueryAdapter({
     projectId,
+    jobProjectId,
     datasetId,
     tableName,
+    credentials: loadServiceAccountFromEnv(),
     keyFilePath: process.env.GOOGLE_APPLICATION_CREDENTIALS,
     billingAccountIds: process.env.GCP_BILLING_ACCOUNT_IDS?.split(',').map((s) => s.trim()),
   });

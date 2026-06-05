@@ -21,9 +21,10 @@ const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   description: z.string().nullable().optional(),
   group: z.string().min(1).max(100).optional(),
-  authType: z.enum(['SERVICE_ACCOUNT', 'API_KEY']).optional(),
+  authType: z.enum(['SERVICE_ACCOUNT', 'API_KEY', 'APPLICATION_DEFAULT']).optional(),
   credentials: z.record(z.string(), z.unknown()).optional(),
   billingProjectId: z.string().max(255).nullable().optional(),
+  billingJobProjectId: z.string().max(255).nullable().optional(),
   billingDatasetId: z.string().max(255).nullable().optional(),
   billingTableName: z.string().max(255).nullable().optional(),
   billingAccountIds: z.array(z.string()).optional(),
@@ -41,7 +42,24 @@ function maskCredentials(authType: string, creds: unknown): unknown {
     const key = c.key ?? '';
     return { key: key.slice(0, 6) + '••••••••' };
   }
+  if (authType === 'APPLICATION_DEFAULT') {
+    return { mode: 'application_default' };
+  }
   return creds;
+}
+
+function validateCredentials(authType: string, creds: unknown): string | null {
+  if (authType === 'SERVICE_ACCOUNT') {
+    const c = creds as Record<string, string>;
+    if (!c?.client_email || !c?.private_key) {
+      return 'SERVICE_ACCOUNT credentials must include client_email and private_key';
+    }
+  }
+  if (authType === 'API_KEY') {
+    const c = creds as Record<string, string>;
+    if (!c?.key) return 'API_KEY credentials must include key';
+  }
+  return null;
 }
 
 export const GET = withAuthParams(async (_request: NextRequest, context): Promise<NextResponse> => {
@@ -60,6 +78,7 @@ export const GET = withAuthParams(async (_request: NextRequest, context): Promis
       authType: conn.authType,
       credentials: maskCredentials(conn.authType, conn.credentials),
       billingProjectId: conn.billingProjectId,
+      billingJobProjectId: conn.billingJobProjectId,
       billingDatasetId: conn.billingDatasetId,
       billingTableName: conn.billingTableName,
       billingAccountIds: conn.billingAccountIds,
@@ -90,6 +109,15 @@ export const PUT = withAuthParams(async (request: NextRequest, context): Promise
 
     const data = validation.data;
     const updateGroup = data.group ?? existing.group;
+    const nextAuthType = data.authType ?? existing.authType;
+    const nextCredentials =
+      data.credentials !== undefined
+        ? data.credentials
+        : data.authType === 'APPLICATION_DEFAULT'
+          ? {}
+          : existing.credentials;
+    const credentialError = validateCredentials(nextAuthType, nextCredentials);
+    if (credentialError) return badRequest(credentialError);
 
     // If setting as default, clear others in the same group
     if (data.isDefault === true) {
@@ -106,8 +134,11 @@ export const PUT = withAuthParams(async (request: NextRequest, context): Promise
         ...(data.description !== undefined && { description: data.description }),
         ...(data.group !== undefined && { group: data.group }),
         ...(data.authType !== undefined && { authType: data.authType }),
-        ...(data.credentials !== undefined && { credentials: data.credentials as object }),
+        ...(data.credentials !== undefined || data.authType === 'APPLICATION_DEFAULT'
+          ? { credentials: nextCredentials as object }
+          : {}),
         ...(data.billingProjectId !== undefined && { billingProjectId: data.billingProjectId }),
+        ...(data.billingJobProjectId !== undefined && { billingJobProjectId: data.billingJobProjectId }),
         ...(data.billingDatasetId !== undefined && { billingDatasetId: data.billingDatasetId }),
         ...(data.billingTableName !== undefined && { billingTableName: data.billingTableName }),
         ...(data.billingAccountIds !== undefined && { billingAccountIds: data.billingAccountIds }),
@@ -132,6 +163,7 @@ export const PUT = withAuthParams(async (request: NextRequest, context): Promise
       authType: updated.authType,
       credentials: maskCredentials(updated.authType, updated.credentials),
       billingProjectId: updated.billingProjectId,
+      billingJobProjectId: updated.billingJobProjectId,
       billingDatasetId: updated.billingDatasetId,
       billingTableName: updated.billingTableName,
       billingAccountIds: updated.billingAccountIds,
