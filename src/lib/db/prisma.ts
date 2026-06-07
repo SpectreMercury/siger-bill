@@ -1,12 +1,12 @@
 /**
- * Prisma Client Singleton for Neon Serverless PostgreSQL
+ * Prisma Client Singleton for PostgreSQL
  *
  * This module provides a single instance of PrismaClient configured with
- * the Neon serverless adapter for optimal edge/serverless performance.
+ * the PostgreSQL driver adapter.
  */
 
 import { PrismaClient } from '@prisma/client';
-import { PrismaNeon } from '@prisma/adapter-neon';
+import { PrismaPg } from '@prisma/adapter-pg';
 
 const connectionString = process.env.DATABASE_URL!;
 
@@ -15,7 +15,7 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createPrismaClient(): PrismaClient {
-  const adapter = new PrismaNeon({ connectionString });
+  const adapter = new PrismaPg({ connectionString });
 
   return new PrismaClient({
     adapter,

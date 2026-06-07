@@ -12,16 +12,16 @@
  */
 
 import { PrismaClient, ScopeType } from '@prisma/client';
-import { PrismaNeon } from '@prisma/adapter-neon';
+import { PrismaPg } from '@prisma/adapter-pg';
 import * as bcrypt from 'bcryptjs';
 import * as dotenv from 'dotenv';
 
 // Load environment variables
 dotenv.config();
 
-// Create Prisma client with Neon adapter
+// Create Prisma client with PostgreSQL adapter
 const connectionString = process.env.DATABASE_URL!;
-const adapter = new PrismaNeon({ connectionString });
+const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
 // ============================================================================
