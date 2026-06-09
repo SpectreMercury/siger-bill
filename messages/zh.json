@@ -273,6 +273,9 @@
       "boundToOther": "已被其他客户绑定，无法添加",
       "selfBoundTag": "已选",
       "otherBoundTag": "绑给",
+      "boundToCurrentCustomerTag": "当前客户",
+      "boundToCustomerTag": "已绑定给 {name}",
+      "unknownCustomer": "其他客户",
       "unnamedProject": "(无名称)"
     },
     "projectIds": "GCP 项目 ID",

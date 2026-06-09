@@ -273,6 +273,9 @@
       "boundToOther": "Already bound to another customer — cannot add",
       "selfBoundTag": "Selected",
       "otherBoundTag": "Bound to",
+      "boundToCurrentCustomerTag": "Current customer",
+      "boundToCustomerTag": "Bound to {name}",
+      "unknownCustomer": "another customer",
       "unnamedProject": "(no name)"
     },
     "projectIds": "GCP Project IDs",

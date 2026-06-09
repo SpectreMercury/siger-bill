@@ -300,6 +300,11 @@ export function ManageProjectsDrawer({
                     .filter((bc) => bc.customerId !== customerId)
                     .map((bc) => bc.customerName)[0];
                   const disabled = boundElsewhere && !selected;
+                  const statusLabel = selected
+                    ? t('boundToCurrentCustomerTag')
+                    : boundElsewhere
+                      ? t('boundToCustomerTag', { name: elsewhereName ?? t('unknownCustomer') })
+                      : null;
 
                   return (
                     <li key={p.id} role="option" aria-selected={selected}>
@@ -308,12 +313,12 @@ export function ManageProjectsDrawer({
                         disabled={disabled}
                         onClick={() => (selected ? removeProject(p.projectId) : addProject(p))}
                         className={`group flex w-full items-start gap-3 px-3 py-2 text-left transition-colors
-                          ${disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-accent/60 cursor-pointer'}
+                          ${disabled ? 'cursor-not-allowed bg-muted/30' : 'hover:bg-accent/60 cursor-pointer'}
                           ${selected ? 'bg-accent/40' : ''}
                         `}
                         title={
                           disabled
-                            ? `${t('boundToOther')}${elsewhereName ? `: ${elsewhereName}` : ''}`
+                            ? t('boundToCustomerTag', { name: elsewhereName ?? t('unknownCustomer') })
                             : selected
                             ? t('alreadySelected')
                             : undefined
@@ -330,7 +335,7 @@ export function ManageProjectsDrawer({
                           {selected && <Check className="h-3 w-3 text-primary-foreground" strokeWidth={3} />}
                         </span>
                         <div className="min-w-0 flex-1 leading-tight">
-                          <div className="text-sm truncate">
+                          <div className={`text-sm truncate ${disabled ? 'text-muted-foreground' : 'text-foreground'}`}>
                             {p.name || (
                               <span className="text-muted-foreground italic">
                                 {t('unnamedProject')}
@@ -341,13 +346,16 @@ export function ManageProjectsDrawer({
                             {p.projectId}
                           </div>
                         </div>
-                        {(selected || boundElsewhere) && (
-                          <span className="ml-auto shrink-0 self-center inline-flex items-center rounded-full border bg-background/60 px-2 py-0.5 text-[11px] text-muted-foreground">
-                            {selected
-                              ? t('selfBoundTag')
-                              : elsewhereName
-                              ? `${t('otherBoundTag')} ${elsewhereName}`
-                              : t('otherBoundTag')}
+                        {statusLabel && (
+                          <span
+                            className={`ml-auto max-w-[220px] shrink-0 self-center truncate rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                              selected
+                                ? 'border-primary/20 bg-primary/10 text-primary'
+                                : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300'
+                            }`}
+                            title={statusLabel}
+                          >
+                            {statusLabel}
                           </span>
                         )}
                       </button>
