@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { useTranslations } from 'next-intl';
 import { api } from '@/lib/client/api';
-import { PaginatedResponse, Project } from '@/lib/client/types';
+import { PaginatedResponse } from '@/lib/client/types';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/shadcn/button';
 import { Input } from '@/components/ui/shadcn/input';
@@ -32,6 +32,24 @@ interface CustomerBinding {
   projectId: string;
   projectName: string | null;
   billable: boolean;
+}
+
+interface ProjectBindingCandidate {
+  id: string;
+  projectId: string;
+  name: string | null;
+  billable: boolean;
+  billingAccount: {
+    id: string;
+    billingAccountId: string;
+    name: string | null;
+  } | null;
+  boundCustomers: Array<{
+    customerId: string;
+    customerName: string;
+    startDate: string | null;
+    endDate: string | null;
+  }>;
 }
 
 interface ManageProjectsDrawerProps {
@@ -61,7 +79,7 @@ export function ManageProjectsDrawer({
 
   // Typeahead state
   const [searchTerm, setSearchTerm] = useState('');
-  const [searchResults, setSearchResults] = useState<Project[]>([]);
+  const [searchResults, setSearchResults] = useState<ProjectBindingCandidate[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -133,9 +151,9 @@ export function ManageProjectsDrawer({
     searchTimer.current = setTimeout(async () => {
       try {
         const url = term.length === 0
-          ? `/projects?limit=50`
-          : `/projects?search=${encodeURIComponent(term)}&limit=50`;
-        const res = await api.get<PaginatedResponse<Project>>(url);
+          ? `/project-billing-configs?limit=50`
+          : `/project-billing-configs?search=${encodeURIComponent(term)}&limit=50`;
+        const res = await api.get<PaginatedResponse<ProjectBindingCandidate>>(url);
         setSearchResults(res.data ?? []);
       } catch (err) {
         console.error('Search failed', err);
@@ -156,7 +174,7 @@ export function ManageProjectsDrawer({
     return { toAdd: add, toRemove: remove, hasChanges: add.length > 0 || remove.length > 0 };
   }, [initialIds, stagedIds]);
 
-  const addProject = (project: Project) => {
+  const addProject = (project: ProjectBindingCandidate) => {
     setStagedIds((prev) => {
       if (prev.has(project.projectId)) return prev;
       const next = new Set(prev);

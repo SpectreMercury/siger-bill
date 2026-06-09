@@ -23,6 +23,7 @@ import {
   DollarSign,
   Layers,
   Star,
+  Pencil,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -157,11 +158,15 @@ export default function PricingListDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditDefaultModal, setShowEditDefaultModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [editingDefaultRule, setEditingDefaultRule] = useState<PricingRule | null>(null);
   const [deletingRule, setDeletingRule] = useState<PricingRule | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUpdatingDefault, setIsUpdatingDefault] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [formData, setFormData] = useState<RuleFormData>(defaultForm());
+  const [defaultDiscountPercent, setDefaultDiscountPercent] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
 
   // ---------------------------------------------------------------------------
@@ -203,6 +208,12 @@ export default function PricingListDetailPage() {
       (g) => g.code.toLowerCase().includes(q) || g.name.toLowerCase().includes(q)
     );
   }, [defaultRuleGroups, groupFilter]);
+
+  const handleEditDefaultClick = (rule: PricingRule) => {
+    setEditingDefaultRule(rule);
+    setDefaultDiscountPercent(rule.discountPercent ?? '');
+    setShowEditDefaultModal(true);
+  };
 
   // ---------------------------------------------------------------------------
   // Table columns
@@ -291,7 +302,19 @@ export default function PricingListDetailPage() {
         id: 'actions',
         header: '',
         cell: ({ row }) =>
-          row.original.isDefault ? null : (
+          row.original.isDefault ? (
+            <Can resource="customers" action="update">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => handleEditDefaultClick(row.original)}
+              >
+                <Pencil className="h-4 w-4" />
+                {t('detail.editDefaultRule')}
+              </Button>
+            </Can>
+          ) : (
             <Can resource="customers" action="delete">
               <Button
                 variant="ghost"
@@ -407,6 +430,35 @@ export default function PricingListDetailPage() {
       setError(err instanceof Error ? err.message : t('detail.addRuleFailed'));
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleUpdateDefaultRule = async () => {
+    if (!editingDefaultRule) return;
+
+    const pct = parseFloat(defaultDiscountPercent);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      setError(t('detail.errors.invalidDiscount'));
+      return;
+    }
+
+    setIsUpdatingDefault(true);
+    setError(null);
+
+    try {
+      await api.put(`/pricing-rules/${editingDefaultRule.id}`, {
+        ruleType: 'LIST_DISCOUNT',
+        discountRate: 1 - pct / 100,
+      });
+      setShowEditDefaultModal(false);
+      setEditingDefaultRule(null);
+      setDefaultDiscountPercent('');
+      fetchData();
+    } catch (err) {
+      console.error('Error updating default rule:', err);
+      setError(err instanceof Error ? err.message : t('detail.updateDefaultRuleFailed'));
+    } finally {
+      setIsUpdatingDefault(false);
     }
   };
 
@@ -825,6 +877,69 @@ export default function PricingListDetailPage() {
               disabled={isSaving || formData.skuGroupIds.length === 0}
             >
               {isSaving ? tc('saving') : tc('add')}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ================================================================
+          Edit Default Rule Modal
+          ================================================================ */}
+      <Modal
+        isOpen={showEditDefaultModal}
+        onClose={() => {
+          setShowEditDefaultModal(false);
+          setEditingDefaultRule(null);
+          setDefaultDiscountPercent('');
+        }}
+        title={t('detail.editDefaultRuleTitle')}
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            {t('detail.editDefaultRuleDescription')}
+          </p>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="defaultDiscountPercent">
+              {t('detail.discountPercent')} <span className="text-destructive">*</span>
+            </Label>
+            <div className="relative">
+              <Input
+                id="defaultDiscountPercent"
+                type="number"
+                value={defaultDiscountPercent}
+                onChange={(e) => setDefaultDiscountPercent(e.target.value)}
+                min={0}
+                max={100}
+                step={0.1}
+                className="pr-8"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">%</span>
+            </div>
+            {defaultDiscountPercent && (
+              <p className="text-xs text-muted-foreground">
+                {t('detail.discountPaysHint')}{' '}
+                <span className="font-semibold text-foreground">
+                  {(100 - parseFloat(defaultDiscountPercent || '0')).toFixed(1)}%
+                </span>
+              </p>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowEditDefaultModal(false);
+                setEditingDefaultRule(null);
+                setDefaultDiscountPercent('');
+              }}
+            >
+              {tc('cancel')}
+            </Button>
+            <Button onClick={handleUpdateDefaultRule} disabled={isUpdatingDefault}>
+              {isUpdatingDefault ? tc('saving') : tc('save')}
             </Button>
           </div>
         </div>

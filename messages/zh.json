@@ -593,6 +593,9 @@
       "defaultBadge": "默认",
       "explicitBadge": "显式",
       "defaultCoversAll": "覆盖剩余 {count} 个分组（其他规则未涉及）",
+      "editDefaultRule": "编辑默认",
+      "editDefaultRuleTitle": "编辑默认规则",
+      "editDefaultRuleDescription": "这条 All other / 默认规则会应用于未被显式规则覆盖的 SKU 分组，包括未映射或未来新增的分组。",
       "coverage": {
         "total": "总分组数",
         "default": "默认规则覆盖",
@@ -624,9 +627,11 @@
       "addRuleFailed": "添加定价规则失败",
       "deleteRuleTitle": "删除定价规则",
       "deleteRuleConfirm": "确定要删除此定价规则吗？删除后这 {n} 个 SKU 分组将自动归还到默认规则。",
+      "updateDefaultRuleFailed": "更新默认规则失败",
       "deleteRuleFailed": "删除定价规则失败",
       "errors": {
-        "atLeastOneGroup": "至少需要选择一个 SKU 分组"
+        "atLeastOneGroup": "至少需要选择一个 SKU 分组",
+        "invalidDiscount": "折扣必须在 0 到 100 之间"
       },
       "ruleTypes": {
         "LIST_DISCOUNT": "折扣类",

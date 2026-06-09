@@ -52,13 +52,22 @@ type ConfigRow = {
   updater: { id: string; firstName: string; lastName: string; email: string } | null;
 };
 
-function mapConfig(c: ConfigRow) {
+function mapConfig(
+  c: ConfigRow,
+  boundCustomers: Array<{
+    customerId: string;
+    customerName: string;
+    startDate: Date | null;
+    endDate: Date | null;
+  }> = []
+) {
   return {
     id: c.id,
     projectId: c.projectId,
     name: c.name,
     billable: c.billable,
     billingAccount: c.billingAccount,
+    boundCustomers,
     createdBy: c.creator,
     updatedBy: c.updater,
     createdAt: c.createdAt,
@@ -144,8 +153,37 @@ export const GET = withPermission(
         prisma.projectBillingConfig.count({ where }),
       ]);
 
+      const projectIds = rows.map((r) => r.projectId);
+      const bindings = projectIds.length === 0
+        ? []
+        : await prisma.customerProject.findMany({
+            where: { projectId: { in: projectIds }, isActive: true },
+            select: {
+              projectId: true,
+              startDate: true,
+              endDate: true,
+              customer: { select: { id: true, name: true } },
+            },
+          });
+      const bindingsByProject = new Map<string, Array<{
+        customerId: string;
+        customerName: string;
+        startDate: Date | null;
+        endDate: Date | null;
+      }>>();
+      for (const binding of bindings) {
+        const values = bindingsByProject.get(binding.projectId) ?? [];
+        values.push({
+          customerId: binding.customer.id,
+          customerName: binding.customer.name,
+          startDate: binding.startDate,
+          endDate: binding.endDate,
+        });
+        bindingsByProject.set(binding.projectId, values);
+      }
+
       return success({
-        data: rows.map(mapConfig),
+        data: rows.map((row) => mapConfig(row, bindingsByProject.get(row.projectId))),
         pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
       });
     } catch (error) {

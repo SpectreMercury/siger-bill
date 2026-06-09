@@ -593,6 +593,9 @@
       "defaultBadge": "Default",
       "explicitBadge": "Explicit",
       "defaultCoversAll": "Covers remaining {count} group(s) (not in any explicit rule)",
+      "editDefaultRule": "Edit default",
+      "editDefaultRuleTitle": "Edit Default Rule",
+      "editDefaultRuleDescription": "This All other / default rule applies to SKU groups not covered by explicit rules, including unmapped or future groups.",
       "coverage": {
         "total": "Total groups",
         "default": "Under default",
@@ -624,9 +627,11 @@
       "addRuleFailed": "Failed to add pricing rule",
       "deleteRuleTitle": "Delete Pricing Rule",
       "deleteRuleConfirm": "Delete this pricing rule? Its {n} SKU group(s) will be returned to the default rule.",
+      "updateDefaultRuleFailed": "Failed to update default rule",
       "deleteRuleFailed": "Failed to delete pricing rule",
       "errors": {
-        "atLeastOneGroup": "At least one SKU group is required"
+        "atLeastOneGroup": "At least one SKU group is required",
+        "invalidDiscount": "Discount must be between 0 and 100"
       },
       "ruleTypes": {
         "LIST_DISCOUNT": "List Discount",
