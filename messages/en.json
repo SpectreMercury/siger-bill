@@ -121,7 +121,8 @@
       "projectBillingConfigs": "Project Billing",
       "credits": "Credits",
       "specialRules": "Special Rules",
-      "rawCostImports": "Cost Imports"
+      "rawCostImports": "Cost Imports",
+      "monthlyBilling": "Historical Billing"
     },
     "operations": {
       "title": "Operations",
@@ -1226,6 +1227,20 @@
     "billingConfigDesc": "Enable automatic billing data fetching from BigQuery",
     "billingConfigured": "Configured",
     "billingNotConfigured": "Not Configured"
+  },
+  "monthlyBilling": {
+    "title": "Historical Billing",
+    "subtitle": "Browse BigQuery billing details by month and export the customer billing Excel template.",
+    "billingMonth": "Billing month",
+    "customer": "Customer",
+    "allCustomers": "All customers",
+    "apply": "Apply filters",
+    "exportExcel": "Export Excel",
+    "rowCount": "{count} rows",
+    "pageInfo": "Page {page} / {totalPages}",
+    "empty": "No billing details found for this month",
+    "loadFailed": "Failed to load historical billing",
+    "exportFailed": "Failed to export Excel"
   },
   "customerProjects": {
     "heading": "Bound projects",

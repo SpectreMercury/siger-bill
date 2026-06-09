@@ -121,7 +121,8 @@
       "projectBillingConfigs": "Project 计费配置",
       "credits": "信用额度",
       "specialRules": "特殊规则",
-      "rawCostImports": "成本导入"
+      "rawCostImports": "成本导入",
+      "monthlyBilling": "往月账单"
     },
     "operations": {
       "title": "运营管理",
@@ -1226,6 +1227,20 @@
     "billingConfigDesc": "配置后可自动从 BigQuery 拉取账单数据",
     "billingConfigured": "已配置",
     "billingNotConfigured": "未配置"
+  },
+  "monthlyBilling": {
+    "title": "往月账单",
+    "subtitle": "按月份浏览 BigQuery 账单明细，并按客户账单模板导出 Excel。",
+    "billingMonth": "账单月份",
+    "customer": "客户",
+    "allCustomers": "全部客户",
+    "apply": "应用筛选",
+    "exportExcel": "导出 Excel",
+    "rowCount": "共 {count} 行",
+    "pageInfo": "第 {page} / {totalPages} 页",
+    "empty": "没有找到该月份的账单明细",
+    "loadFailed": "加载往月账单失败",
+    "exportFailed": "导出 Excel 失败"
   },
   "customerProjects": {
     "heading": "已绑定的项目",

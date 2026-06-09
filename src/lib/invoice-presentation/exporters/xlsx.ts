@@ -1,241 +1,494 @@
 /**
  * XLSX Exporter (Phase 6)
  *
- * Exports invoice data to Excel format with multiple sheets:
- * - Summary sheet with header info
- * - Line Items sheet with aggregated data
- * - Credits sheet (if applicable)
- * - Raw Data sheet (optional)
+ * Exports invoice data in the reseller billing detail template used for
+ * monthly customer billing reconciliation.
  */
 
+import * as XLSX from 'xlsx';
+import { BillingProvider, Prisma, PricingRuleType } from '@prisma/client';
+import { prisma } from '@/lib/db';
+import { loadSkuGroupMappings } from '@/lib/pricing';
 import { InvoicePresentation, ExportResult, ExportOptions, CreditBreakdown, PricingBreakdown } from '../types';
 import { generateContentHash } from '../builder';
 
-// Simple XLSX generation without external dependencies
-// In production, consider using a library like 'xlsx' or 'exceljs'
+type RawGcpPayload = {
+  billing_account_id?: string;
+  service?: { id?: string; description?: string } | null;
+  sku?: { id?: string; description?: string } | null;
+  project?: { id?: string; name?: string } | null;
+  usage_start_time?: { value?: string } | string | null;
+  usage_end_time?: { value?: string } | string | null;
+  usage?: { amount?: number; unit?: string } | null;
+  cost_at_list?: number | string | null;
+  currency_conversion_rate?: number | string | null;
+  credits?: Array<{ amount?: number | string | null; type?: string | null }> | null;
+};
 
-/**
- * XML escape for XLSX content
- */
-function escapeXML(value: string | undefined | null): string {
-  if (value === undefined || value === null) return '';
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
+type BillingTemplateRow = Array<string | number | Date | null>;
 
-/**
- * Format decimal for display
- */
-function formatDecimal(value: { toString: () => string }): string {
-  return parseFloat(value.toString()).toFixed(2);
-}
+type PricingRuleForExport = {
+  id: string;
+  isDefault: boolean;
+  ruleType: PricingRuleType;
+  discountRate: Prisma.Decimal | null;
+  unitPrice: Prisma.Decimal | null;
+  tiers: Prisma.JsonValue | null;
+  effectiveStart: Date | null;
+  effectiveEnd: Date | null;
+  skuGroups: Array<{ skuGroup: { id: string; code: string } }>;
+};
 
-/**
- * Format date for display
- */
+export const TEMPLATE_HEADERS = [
+  '公司名称',
+  '账单账号ID',
+  '标签',
+  '项目名称',
+  '项目ID',
+  '服务描述',
+  '服务ID',
+  'SKU描述',
+  'SKUid',
+  '资源名称',
+  '资源唯一标识符',
+  '使用开始时间',
+  '使用结束时间',
+  '使用量',
+  '用量单位',
+  '费用单位',
+  '列表价',
+  'Discount/Price',
+  '合同优惠金额',
+  '优惠后金额',
+  '代金券减免',
+  '最终付款金额',
+  '折后总金额(CNY,不含税)',
+  'transaction_type',
+  '收费类型',
+];
+
 function formatDate(date: Date): string {
   return date.toISOString().split('T')[0];
 }
 
-/**
- * Generate a simple XLSX file using Open XML format
- * This is a minimal implementation - for production, use a proper XLSX library
- */
-function generateXLSXContent(
-  presentation: InvoicePresentation,
-  options: ExportOptions,
-  creditsBreakdown?: CreditBreakdown[],
-  pricingBreakdown?: PricingBreakdown
-): Buffer {
-  // For a proper XLSX implementation, we'd use a library like 'xlsx' or 'exceljs'
-  // This generates a simple XML-based spreadsheet (SpreadsheetML) that Excel can open
+function toDecimal(value: unknown, fallback = 0): Prisma.Decimal {
+  if (value === null || value === undefined || value === '') return new Prisma.Decimal(fallback);
+  try {
+    return new Prisma.Decimal(value as string | number);
+  } catch {
+    return new Prisma.Decimal(fallback);
+  }
+}
 
-  const sheets: Array<{ name: string; rows: string[][] }> = [];
+function asRawPayload(value: Prisma.JsonValue | null): RawGcpPayload {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as RawGcpPayload
+    : {};
+}
 
-  // Summary Sheet
-  const summaryRows: string[][] = [
-    ['INVOICE SUMMARY'],
-    [],
-    ['Invoice Number', presentation.header.invoiceNumber],
-    ['Invoice Date', formatDate(presentation.header.invoiceDate)],
-    ['Due Date', formatDate(presentation.header.dueDate)],
-    ['Billing Month', presentation.header.billingMonth],
-    ['Status', presentation.header.status],
-    [],
-    ['CUSTOMER INFORMATION'],
-    ['Customer Name', presentation.customer.name],
-    ['Customer ID', presentation.customer.externalId || presentation.customer.id],
-    ['Contact Email', presentation.customer.contactEmail || ''],
-    ['Address', presentation.customer.address || ''],
-    [],
-    ['FINANCIAL SUMMARY'],
-    ['Description', 'Amount', 'Currency'],
-    ['Subtotal (List Price)', formatDecimal(presentation.summary.subtotal), presentation.summary.currency],
-    ['Total Discount', `-${formatDecimal(presentation.summary.totalDiscount)}`, presentation.summary.currency],
-    ['Total Tier Discount', `-${formatDecimal(presentation.summary.totalTierDiscount)}`, presentation.summary.currency],
-    ['Total Credits Applied', `-${formatDecimal(presentation.summary.totalCredits)}`, presentation.summary.currency],
-    ['Tax', formatDecimal(presentation.summary.taxAmount), presentation.summary.currency],
-    ['GRAND TOTAL', formatDecimal(presentation.summary.grandTotal), presentation.summary.currency],
-    [],
-    ['Payment Terms', `${presentation.paymentTerms.days} days`],
-  ];
+function rawDateValue(value: RawGcpPayload['usage_start_time'], fallback: Date): string {
+  if (typeof value === 'string') return value.slice(0, 10);
+  if (value && typeof value === 'object' && value.value) return value.value.slice(0, 10);
+  return formatDate(fallback);
+}
 
-  sheets.push({ name: 'Summary', rows: summaryRows });
+function sumCreditAmount(raw: RawGcpPayload): Prisma.Decimal {
+  if (!Array.isArray(raw.credits)) return new Prisma.Decimal(0);
+  return raw.credits.reduce(
+    (sum, credit) => sum.add(toDecimal(credit?.amount)),
+    new Prisma.Decimal(0)
+  );
+}
 
-  // Line Items Sheet
-  const lineItemsRows: string[][] = [
-    [
-      'Row ID',
-      'Description',
-      'Product Group',
-      'Provider',
-      'Service',
-      'Quantity',
-      'Unit',
-      'List Amount',
-      'Discount',
-      'Tier Discount',
-      'Credits Applied',
-      'Special Rules Adj',
-      'Net Amount',
-      'Currency',
-      'Item Count',
-    ],
-  ];
+function ruleAppliesToMonth(rule: PricingRuleForExport, monthStart: Date, monthEnd: Date): boolean {
+  const effectiveStart = rule.effectiveStart ?? new Date(0);
+  const effectiveEnd = rule.effectiveEnd ?? new Date('2100-01-01');
+  return effectiveStart < monthEnd && effectiveEnd >= monthStart;
+}
 
-  for (const row of presentation.rows) {
-    lineItemsRows.push([
-      row.rowId,
-      row.description,
-      row.productGroup,
-      row.provider || '',
-      row.service || '',
-      formatDecimal(row.usage.quantity),
-      row.usage.unit,
-      formatDecimal(row.amounts.listAmount),
-      formatDecimal(row.amounts.discountAmount),
-      formatDecimal(row.amounts.tierDiscountAmount),
-      formatDecimal(row.amounts.creditApplied),
-      formatDecimal(row.amounts.specialRulesAdjustment),
-      formatDecimal(row.amounts.netAmount),
-      row.currency,
-      row.itemCount.toString(),
+function selectRule(
+  rules: PricingRuleForExport[],
+  skuGroupId: string | null,
+  monthStart: Date,
+  monthEnd: Date
+): PricingRuleForExport | null {
+  const effectiveRules = rules.filter((rule) => ruleAppliesToMonth(rule, monthStart, monthEnd));
+  if (skuGroupId) {
+    const explicit = effectiveRules.find(
+      (rule) => !rule.isDefault && rule.skuGroups.some((g) => g.skuGroup.id === skuGroupId)
+    );
+    if (explicit) return explicit;
+  }
+  return effectiveRules.find((rule) => rule.isDefault) ?? null;
+}
+
+function discountLabel(rule: PricingRuleForExport | null): string {
+  if (!rule) return 'List Price';
+  if (rule.ruleType === 'LIST_DISCOUNT' && rule.discountRate != null) {
+    return `List Price * ${rule.discountRate.mul(100).toDecimalPlaces(4).toString()}%`;
+  }
+  if (rule.ruleType === 'UNIT_PRICE' && rule.unitPrice != null) {
+    return `Unit Price ${rule.unitPrice.toString()}`;
+  }
+  if (rule.ruleType === 'TIERED') return 'TODO';
+  return 'List Price';
+}
+
+function billingType(raw: RawGcpPayload): string {
+  const creditTypes = Array.isArray(raw.credits)
+    ? raw.credits.map((credit) => credit.type).filter(Boolean)
+    : [];
+  if (creditTypes.length === 0) return 'TODO';
+  return 'TODO';
+}
+
+async function buildBillingTemplateRows(invoiceId: string): Promise<{
+  invoiceNumber: string;
+  rows: BillingTemplateRow[];
+}> {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: {
+      customer: {
+        include: {
+          customerProjects: {
+            where: { isActive: true },
+            select: { projectId: true, startDate: true, endDate: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!invoice) {
+    throw new Error(`Invoice not found: ${invoiceId}`);
+  }
+
+  const [year, month] = invoice.billingMonth.split('-').map(Number);
+  const monthStart = new Date(Date.UTC(year, month - 1, 1));
+  const monthEnd = new Date(Date.UTC(year, month, 1));
+  const activeProjectIds = invoice.customer.customerProjects
+    .filter((binding) => {
+      const start = binding.startDate ?? new Date(0);
+      const end = binding.endDate ?? new Date('2100-01-01');
+      return start < monthEnd && end >= monthStart;
+    })
+    .map((binding) => binding.projectId);
+
+  const lineItems = activeProjectIds.length === 0
+    ? []
+    : await prisma.billingLineItem.findMany({
+        where: {
+          provider: BillingProvider.GCP,
+          invoiceMonth: invoice.billingMonth,
+          subaccountId: { in: activeProjectIds },
+        },
+        orderBy: [{ usageStartTime: 'asc' }, { subaccountId: 'asc' }, { meterId: 'asc' }],
+      });
+
+  const projectConfigs = await prisma.projectBillingConfig.findMany({
+    where: { projectId: { in: activeProjectIds } },
+    select: { projectId: true, name: true },
+  });
+  const projectNameById = new Map(projectConfigs.map((project) => [project.projectId, project.name]));
+
+  const pricingList = await prisma.pricingList.findFirst({
+    where: { customerId: invoice.customerId, status: 'ACTIVE' },
+    include: {
+      pricingRules: {
+        include: { skuGroups: { include: { skuGroup: { select: { id: true, code: true } } } } },
+        orderBy: [{ isDefault: 'asc' }, { createdAt: 'desc' }],
+      },
+    },
+  });
+  const rules = pricingList?.pricingRules ?? [];
+  const skuGroupMappings = await loadSkuGroupMappings();
+  const companyName = invoice.customer.externalId || invoice.customer.name;
+
+  const rows: BillingTemplateRow[] = [TEMPLATE_HEADERS];
+
+  for (const item of lineItems) {
+    const raw = asRawPayload(item.rawPayload);
+    const mapping = skuGroupMappings.get(item.meterId);
+    const rule = selectRule(rules, mapping?.skuGroupId ?? null, monthStart, monthEnd);
+    const rate = rule?.ruleType === 'LIST_DISCOUNT' && rule.discountRate != null
+      ? rule.discountRate
+      : new Prisma.Decimal(1);
+
+    const voucherAmount = sumCreditAmount(raw);
+    const listAmount = raw.cost_at_list != null
+      ? toDecimal(raw.cost_at_list)
+      : item.listCost ?? item.cost.sub(voucherAmount);
+    const contractDiscount = listAmount.mul(rate).sub(listAmount);
+    const discountedAmount = listAmount.add(contractDiscount);
+    const finalAmount = discountedAmount.add(voucherAmount);
+    const conversionRate = raw.currency_conversion_rate != null
+      ? toDecimal(raw.currency_conversion_rate)
+      : null;
+    const cnyAmount = conversionRate ? finalAmount.mul(conversionRate) : null;
+
+    rows.push([
+      companyName,
+      raw.billing_account_id ?? item.accountId,
+      'TODO',
+      raw.project?.name ?? projectNameById.get(item.subaccountId ?? '') ?? item.subaccountId ?? '',
+      raw.project?.id ?? item.subaccountId ?? '',
+      raw.service?.description ?? item.productId,
+      raw.service?.id ?? item.productId,
+      raw.sku?.description ?? item.meterId,
+      raw.sku?.id ?? item.meterId,
+      'TODO',
+      'TODO',
+      rawDateValue(raw.usage_start_time, item.usageStartTime),
+      rawDateValue(raw.usage_end_time, item.usageEndTime),
+      raw.usage?.amount ?? Number(item.usageAmount),
+      raw.usage?.unit ?? item.usageUnit,
+      item.currency,
+      Number(listAmount.toDecimalPlaces(10).toString()),
+      discountLabel(rule),
+      Number(contractDiscount.toDecimalPlaces(10).toString()),
+      Number(discountedAmount.toDecimalPlaces(10).toString()),
+      Number(voucherAmount.toDecimalPlaces(10).toString()),
+      Number(finalAmount.toDecimalPlaces(10).toString()),
+      cnyAmount ? Number(cnyAmount.toDecimalPlaces(10).toString()) : null,
+      'TODO',
+      billingType(raw),
     ]);
   }
 
-  // Add totals row
-  lineItemsRows.push([]);
-  lineItemsRows.push([
-    '',
-    'TOTALS',
-    '',
-    '',
-    '',
-    '',
-    '',
-    formatDecimal(presentation.summary.subtotal),
-    formatDecimal(presentation.summary.totalDiscount),
-    formatDecimal(presentation.summary.totalTierDiscount),
-    formatDecimal(presentation.summary.totalCredits),
-    formatDecimal(presentation.summary.totalSpecialRulesAdjustment),
-    formatDecimal(presentation.summary.grandTotal),
-    presentation.summary.currency,
-    '',
+  return { invoiceNumber: invoice.invoiceNumber, rows };
+}
+
+type CustomerForTemplate = {
+  id: string;
+  name: string;
+  externalId: string | null;
+};
+
+type TemplateBuildOptions = {
+  billingMonth: string;
+  customerId?: string;
+  page?: number;
+  limit?: number;
+};
+
+type TemplateBuildResult = {
+  rows: BillingTemplateRow[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+async function getActiveProjectCustomers(
+  billingMonth: string,
+  customerId?: string
+): Promise<Map<string, CustomerForTemplate>> {
+  const [year, month] = billingMonth.split('-').map(Number);
+  const monthStart = new Date(Date.UTC(year, month - 1, 1));
+  const monthEnd = new Date(Date.UTC(year, month, 1));
+
+  const bindings = await prisma.customerProject.findMany({
+    where: {
+      isActive: true,
+      ...(customerId ? { customerId } : {}),
+      OR: [{ startDate: null }, { startDate: { lt: monthEnd } }],
+      AND: [{ OR: [{ endDate: null }, { endDate: { gte: monthStart } }] }],
+    },
+    select: {
+      projectId: true,
+      customer: { select: { id: true, name: true, externalId: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return new Map(bindings.map((binding) => [binding.projectId, binding.customer]));
+}
+
+async function loadPricingRulesForCustomers(customerIds: string[]) {
+  const lists = await prisma.pricingList.findMany({
+    where: { customerId: { in: customerIds }, status: 'ACTIVE' },
+    include: {
+      pricingRules: {
+        include: { skuGroups: { include: { skuGroup: { select: { id: true, code: true } } } } },
+        orderBy: [{ isDefault: 'asc' }, { createdAt: 'desc' }],
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  const rulesByCustomer = new Map<string, PricingRuleForExport[]>();
+  for (const list of lists) {
+    if (!rulesByCustomer.has(list.customerId)) {
+      rulesByCustomer.set(list.customerId, list.pricingRules);
+    }
+  }
+  return rulesByCustomer;
+}
+
+function buildTemplateDataRow(params: {
+  item: Awaited<ReturnType<typeof prisma.billingLineItem.findMany>>[number];
+  raw: RawGcpPayload;
+  customer: CustomerForTemplate | undefined;
+  projectName: string | null | undefined;
+  rule: PricingRuleForExport | null;
+}): BillingTemplateRow {
+  const { item, raw, customer, projectName, rule } = params;
+  const rate = rule?.ruleType === 'LIST_DISCOUNT' && rule.discountRate != null
+    ? rule.discountRate
+    : new Prisma.Decimal(1);
+  const voucherAmount = sumCreditAmount(raw);
+  const listAmount = raw.cost_at_list != null
+    ? toDecimal(raw.cost_at_list)
+    : item.listCost ?? item.cost.sub(voucherAmount);
+  const contractDiscount = listAmount.mul(rate).sub(listAmount);
+  const discountedAmount = listAmount.add(contractDiscount);
+  const finalAmount = discountedAmount.add(voucherAmount);
+  const conversionRate = raw.currency_conversion_rate != null
+    ? toDecimal(raw.currency_conversion_rate)
+    : null;
+  const cnyAmount = conversionRate ? finalAmount.mul(conversionRate) : null;
+
+  return [
+    customer?.externalId || customer?.name || '',
+    raw.billing_account_id ?? item.accountId,
+    'TODO',
+    raw.project?.name ?? projectName ?? item.subaccountId ?? '',
+    raw.project?.id ?? item.subaccountId ?? '',
+    raw.service?.description ?? item.productId,
+    raw.service?.id ?? item.productId,
+    raw.sku?.description ?? item.meterId,
+    raw.sku?.id ?? item.meterId,
+    'TODO',
+    'TODO',
+    rawDateValue(raw.usage_start_time, item.usageStartTime),
+    rawDateValue(raw.usage_end_time, item.usageEndTime),
+    raw.usage?.amount ?? Number(item.usageAmount),
+    raw.usage?.unit ?? item.usageUnit,
+    item.currency,
+    Number(listAmount.toDecimalPlaces(10).toString()),
+    discountLabel(rule),
+    Number(contractDiscount.toDecimalPlaces(10).toString()),
+    Number(discountedAmount.toDecimalPlaces(10).toString()),
+    Number(voucherAmount.toDecimalPlaces(10).toString()),
+    Number(finalAmount.toDecimalPlaces(10).toString()),
+    cnyAmount ? Number(cnyAmount.toDecimalPlaces(10).toString()) : null,
+    'TODO',
+    billingType(raw),
+  ];
+}
+
+export async function buildBillingTemplateRowsForMonth(
+  options: TemplateBuildOptions
+): Promise<TemplateBuildResult> {
+  const page = Math.max(options.page ?? 1, 1);
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 5000);
+  const projectCustomers = await getActiveProjectCustomers(options.billingMonth, options.customerId);
+  const projectIds = Array.from(projectCustomers.keys());
+
+  if (projectIds.length === 0) {
+    return { rows: [TEMPLATE_HEADERS], total: 0, page, limit, totalPages: 0 };
+  }
+
+  const where: Prisma.BillingLineItemWhereInput = {
+    provider: BillingProvider.GCP,
+    invoiceMonth: options.billingMonth,
+    subaccountId: { in: projectIds },
+  };
+
+  const [lineItems, total, projectConfigs, skuGroupMappings, rulesByCustomer] = await Promise.all([
+    prisma.billingLineItem.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: [{ usageStartTime: 'asc' }, { subaccountId: 'asc' }, { meterId: 'asc' }],
+    }),
+    prisma.billingLineItem.count({ where }),
+    prisma.projectBillingConfig.findMany({
+      where: { projectId: { in: projectIds } },
+      select: { projectId: true, name: true },
+    }),
+    loadSkuGroupMappings(),
+    loadPricingRulesForCustomers(Array.from(new Set(Array.from(projectCustomers.values()).map((c) => c.id)))),
   ]);
 
-  sheets.push({ name: 'Line Items', rows: lineItemsRows });
+  const [year, month] = options.billingMonth.split('-').map(Number);
+  const monthStart = new Date(Date.UTC(year, month - 1, 1));
+  const monthEnd = new Date(Date.UTC(year, month, 1));
+  const projectNameById = new Map(projectConfigs.map((project) => [project.projectId, project.name]));
+  const rows: BillingTemplateRow[] = [TEMPLATE_HEADERS];
 
-  // Pricing Breakdown Sheet (if available)
-  if (pricingBreakdown) {
-    const pricingRows: string[][] = [
-      ['PRICING BREAKDOWN'],
-      [],
-      ['Pricing List', pricingBreakdown.pricingListName],
-      ['Pricing List ID', pricingBreakdown.pricingListId],
-      [],
-      ['SKU Group', 'Discount Type', 'Discount Rate', 'Raw Amount', 'Discount Amount', 'Final Amount'],
-    ];
-
-    for (const rule of pricingBreakdown.rules) {
-      pricingRows.push([
-        rule.skuGroupCode,
-        rule.discountType,
-        rule.discountRate,
-        rule.rawAmount,
-        rule.discountAmount,
-        rule.finalAmount,
-      ]);
-    }
-
-    sheets.push({ name: 'Pricing', rows: pricingRows });
+  for (const item of lineItems) {
+    const raw = asRawPayload(item.rawPayload);
+    const customer = item.subaccountId ? projectCustomers.get(item.subaccountId) : undefined;
+    const mapping = skuGroupMappings.get(item.meterId);
+    const rules = customer ? rulesByCustomer.get(customer.id) ?? [] : [];
+    const rule = selectRule(rules, mapping?.skuGroupId ?? null, monthStart, monthEnd);
+    rows.push(buildTemplateDataRow({
+      item,
+      raw,
+      customer,
+      projectName: item.subaccountId ? projectNameById.get(item.subaccountId) : null,
+      rule,
+    }));
   }
 
-  // Credits Breakdown Sheet (if available)
-  if (creditsBreakdown && creditsBreakdown.length > 0) {
-    const creditsRows: string[][] = [
-      ['CREDITS APPLIED'],
-      [],
-      ['Credit ID', 'Credit Type', 'Description', 'Original Amount', 'Applied Amount', 'Remaining', 'Expires'],
-    ];
+  return {
+    rows,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
+  };
+}
 
-    for (const credit of creditsBreakdown) {
-      creditsRows.push([
-        credit.creditId,
-        credit.creditTypes.join(', '),
-        credit.description,
-        formatDecimal(credit.originalAmount),
-        formatDecimal(credit.appliedAmount),
-        formatDecimal(credit.remainingAmount),
-        credit.expiresAt ? formatDate(credit.expiresAt) : 'N/A',
-      ]);
-    }
+export function generateXLSXContent(rows: BillingTemplateRow[]): Buffer {
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: false });
 
-    sheets.push({ name: 'Credits', rows: creditsRows });
-  }
+  worksheet['!cols'] = [
+    { wch: 14 }, { wch: 20 }, { wch: 12 }, { wch: 24 }, { wch: 24 },
+    { wch: 28 }, { wch: 16 }, { wch: 44 }, { wch: 18 }, { wch: 22 },
+    { wch: 26 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 },
+    { wch: 10 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 16 },
+    { wch: 16 }, { wch: 16 }, { wch: 22 }, { wch: 18 }, { wch: 18 },
+  ];
+  worksheet['!autofilter'] = { ref: `A1:Y${Math.max(rows.length, 1)}` };
 
-  // Generate simple CSV-like content for now
-  // In production, use proper XLSX library
-  // We'll create a multi-sheet CSV format (tab-separated with sheet markers)
-  const content: string[] = [];
-
-  for (const sheet of sheets) {
-    content.push(`=== SHEET: ${sheet.name} ===`);
-    for (const row of sheet.rows) {
-      content.push(row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join('\t'));
-    }
-    content.push('');
-  }
-
-  return Buffer.from(content.join('\n'), 'utf-8');
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Billing');
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 }
 
 /**
- * Export invoice to XLSX format
+ * Export invoice to XLSX format.
+ *
+ * The presentation/breakdown arguments are kept for API compatibility with the
+ * other exporters; XLSX now uses invoiceId so it can expand raw billing rows.
  */
-export function exportToXLSX(
+export async function exportToXLSX(
   presentation: InvoicePresentation,
   options: ExportOptions = { format: 'xlsx' },
-  creditsBreakdown?: CreditBreakdown[],
-  pricingBreakdown?: PricingBreakdown
-): ExportResult {
-  const buffer = generateXLSXContent(presentation, options, creditsBreakdown, pricingBreakdown);
-  const contentHash = generateContentHash(buffer);
+  _creditsBreakdown?: CreditBreakdown[],
+  _pricingBreakdown?: PricingBreakdown,
+  invoiceId?: string
+): Promise<ExportResult> {
+  if (!invoiceId) {
+    throw new Error('invoiceId is required for XLSX billing template export');
+  }
 
-  const filename = `invoice-${presentation.header.invoiceNumber}-${formatDate(new Date())}.xlsx`;
+  const { invoiceNumber, rows } = await buildBillingTemplateRows(invoiceId);
+  const buffer = generateXLSXContent(rows);
+  const contentHash = generateContentHash(buffer);
+  const filename = `billing-${invoiceNumber}-${formatDate(new Date())}.xlsx`;
 
   return {
     content: buffer,
-    // Using tab-separated format which Excel can open
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     filename,
     contentHash,
     metadata: {
-      format: 'xlsx',
-      rowCount: presentation.rows.length,
+      format: options.format,
+      rowCount: Math.max(rows.length - 1, 0),
       generatedAt: new Date(),
       invoiceNumber: presentation.header.invoiceNumber,
     },

@@ -109,7 +109,7 @@ export const GET = withPermissionAndScope(
           break;
 
         case 'xlsx':
-          result = exportToXLSX(
+          result = await exportToXLSX(
             presentation,
             {
               format: 'xlsx',
@@ -118,7 +118,8 @@ export const GET = withPermissionAndScope(
               includeCreditsBreakdown: includeCredits,
             },
             creditsBreakdown,
-            pricingBreakdown ?? undefined
+            pricingBreakdown ?? undefined,
+            invoiceId
           );
           break;
 

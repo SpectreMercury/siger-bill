@@ -61,6 +61,7 @@ interface GcpBillingExportRow {
     pricing_unit: string;
   };
   cost: number;
+  cost_at_list?: number | null;
   currency: string;
   currency_conversion_rate: number;
   credits: Array<{
@@ -272,6 +273,7 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
         resource,
         usage,
         cost,
+        cost_at_list,
         currency,
         currency_conversion_rate,
         credits,
@@ -330,7 +332,11 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
 
         // Cost data (cost already includes credits in GCP export)
         cost: new Prisma.Decimal(row.cost),
-        listCost: creditsAmount !== 0 ? new Prisma.Decimal(row.cost - creditsAmount) : undefined,
+        listCost: row.cost_at_list != null
+          ? new Prisma.Decimal(row.cost_at_list)
+          : creditsAmount !== 0
+            ? new Prisma.Decimal(row.cost - creditsAmount)
+            : undefined,
         currency: row.currency,
 
         // Time range

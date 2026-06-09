@@ -185,6 +185,13 @@ const customerSection: NavSection = {
       permission: { resource: 'raw_costs', action: 'list' },
       adminOnly: true,
     },
+    {
+      nameKey: 'customer.monthlyBilling',
+      href: '/admin/monthly-billing',
+      icon: <FileCheck2 className="h-4 w-4" />,
+      permission: { resource: 'raw_cost', action: 'list' },
+      adminOnly: true,
+    },
   ],
 };
 
