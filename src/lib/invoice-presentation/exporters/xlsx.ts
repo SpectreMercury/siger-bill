@@ -80,6 +80,13 @@ function toDecimal(value: unknown, fallback = 0): Prisma.Decimal {
   }
 }
 
+function formatMoneyCell(value: Prisma.Decimal | null): string | null {
+  if (value === null) return null;
+  const fixed = value.toDecimalPlaces(10).toFixed(10);
+  const trimmed = fixed.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  return trimmed === '-0' ? '0' : trimmed;
+}
+
 function asRawPayload(value: Prisma.JsonValue | null): RawGcpPayload {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as RawGcpPayload
@@ -244,13 +251,13 @@ async function buildBillingTemplateRows(invoiceId: string): Promise<{
       raw.usage?.amount ?? Number(item.usageAmount),
       raw.usage?.unit ?? item.usageUnit,
       item.currency,
-      Number(listAmount.toDecimalPlaces(10).toString()),
+      formatMoneyCell(listAmount),
       discountLabel(rule),
-      Number(contractDiscount.toDecimalPlaces(10).toString()),
-      Number(discountedAmount.toDecimalPlaces(10).toString()),
-      Number(voucherAmount.toDecimalPlaces(10).toString()),
-      Number(finalAmount.toDecimalPlaces(10).toString()),
-      cnyAmount ? Number(cnyAmount.toDecimalPlaces(10).toString()) : null,
+      formatMoneyCell(contractDiscount),
+      formatMoneyCell(discountedAmount),
+      formatMoneyCell(voucherAmount),
+      formatMoneyCell(finalAmount),
+      formatMoneyCell(cnyAmount),
       'TODO',
       billingType(raw),
     ]);
@@ -360,13 +367,13 @@ function buildTemplateDataRow(params: {
     raw.usage?.amount ?? Number(item.usageAmount),
     raw.usage?.unit ?? item.usageUnit,
     item.currency,
-    Number(listAmount.toDecimalPlaces(10).toString()),
+    formatMoneyCell(listAmount),
     discountLabel(rule),
-    Number(contractDiscount.toDecimalPlaces(10).toString()),
-    Number(discountedAmount.toDecimalPlaces(10).toString()),
-    Number(voucherAmount.toDecimalPlaces(10).toString()),
-    Number(finalAmount.toDecimalPlaces(10).toString()),
-    cnyAmount ? Number(cnyAmount.toDecimalPlaces(10).toString()) : null,
+    formatMoneyCell(contractDiscount),
+    formatMoneyCell(discountedAmount),
+    formatMoneyCell(voucherAmount),
+    formatMoneyCell(finalAmount),
+    formatMoneyCell(cnyAmount),
     'TODO',
     billingType(raw),
   ];
