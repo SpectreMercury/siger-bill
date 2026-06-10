@@ -7,15 +7,27 @@
 
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
 
 const connectionString = process.env.DATABASE_URL!;
+const poolMax = Number(process.env.DATABASE_POOL_MAX || (process.env.NODE_ENV === 'production' ? 1 : 10));
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
+  prismaPool: Pool | undefined;
 };
 
 function createPrismaClient(): PrismaClient {
-  const adapter = new PrismaPg({ connectionString });
+  const pool = globalForPrisma.prismaPool ?? new Pool({
+    connectionString,
+    max: poolMax,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 10_000,
+  });
+
+  globalForPrisma.prismaPool = pool;
+
+  const adapter = new PrismaPg(pool);
 
   return new PrismaClient({
     adapter,
@@ -27,8 +39,6 @@ function createPrismaClient(): PrismaClient {
 
 export const prisma = globalForPrisma.prisma ?? createPrismaClient();
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
+globalForPrisma.prisma = prisma;
 
 export default prisma;
