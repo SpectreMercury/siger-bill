@@ -284,16 +284,10 @@ async function getActiveProjectCustomers(
   billingMonth: string,
   customerId?: string
 ): Promise<Map<string, CustomerForTemplate>> {
-  const [year, month] = billingMonth.split('-').map(Number);
-  const monthStart = new Date(Date.UTC(year, month - 1, 1));
-  const monthEnd = new Date(Date.UTC(year, month, 1));
-
   const bindings = await prisma.customerProject.findMany({
     where: {
       isActive: true,
       ...(customerId ? { customerId } : {}),
-      OR: [{ startDate: null }, { startDate: { lt: monthEnd } }],
-      AND: [{ OR: [{ endDate: null }, { endDate: { gte: monthStart } }] }],
     },
     select: {
       projectId: true,
