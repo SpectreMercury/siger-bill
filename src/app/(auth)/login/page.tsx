@@ -203,11 +203,11 @@ export default function LoginPage() {
               <div className="space-y-1 font-mono text-xs text-muted-foreground">
                 <p>
                   <span className="text-foreground/60">email:</span>{' '}
-                  <span className="text-foreground">admin@sieger.cloud</span>
+                  <span className="text-foreground">admin@sieger.com</span>
                 </p>
                 <p>
                   <span className="text-foreground/60">password:</span>{' '}
-                  <span className="text-foreground">admin123</span>
+                  <span className="text-foreground">SiegerAdmin2024!</span>
                 </p>
               </div>
             </div>

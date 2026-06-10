@@ -145,9 +145,9 @@ export const SESSION_CONFIG = {
 export const RATE_LIMIT_CONFIG = {
   // Login attempts
   login: {
-    maxAttempts: 5,
+    maxAttempts: 20,
     windowMs: 15 * 60 * 1000, // 15 minutes
-    lockoutDuration: 30 * 60 * 1000, // 30 minutes after max attempts
+    lockoutDuration: 5 * 60 * 1000, // Short lockout for test deployments
   },
 
   // Password reset attempts

@@ -53,7 +53,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const emailRateLimitKey = `login:email:${email.toLowerCase()}`;
     const emailRateLimit = checkRateLimit(emailRateLimitKey, {
       ...RATE_LIMIT_CONFIG.login,
-      maxAttempts: 3, // Fewer attempts per email
+      maxAttempts: 10,
+      lockoutDuration: 5 * 60 * 1000,
     });
 
     if (!emailRateLimit.allowed) {
