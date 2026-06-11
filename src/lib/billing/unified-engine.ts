@@ -244,69 +244,75 @@ export async function ingestFromAdapter(
   }
 
   // Create ingestion batch and line items in transaction
-  const batch = await prisma.$transaction(async (tx) => {
-    const sourceMetadata = result.sourceMetadata as Record<string, unknown>;
-    const source = typeof sourceMetadata?.source === 'string' ? sourceMetadata.source : null;
-    if (source) {
-      const oldBatches = await tx.billingIngestionBatch.findMany({
-        where: {
+  const batch = await prisma.$transaction(
+    async (tx) => {
+      const sourceMetadata = result.sourceMetadata as Record<string, unknown>;
+      const source = typeof sourceMetadata?.source === 'string' ? sourceMetadata.source : null;
+      if (source) {
+        const oldBatches = await tx.billingIngestionBatch.findMany({
+          where: {
+            provider: adapter.provider,
+            sourceType: adapter.sourceType,
+            invoiceMonth: month,
+            sourceMetadata: {
+              path: ['source'],
+              equals: source,
+            },
+          },
+          select: { id: true },
+        });
+
+        if (oldBatches.length > 0) {
+          await tx.billingIngestionBatch.deleteMany({
+            where: { id: { in: oldBatches.map((batch) => batch.id) } },
+          });
+        }
+      }
+
+      const newBatch = await tx.billingIngestionBatch.create({
+        data: {
           provider: adapter.provider,
           sourceType: adapter.sourceType,
           invoiceMonth: month,
-          sourceMetadata: {
-            path: ['source'],
-            equals: source,
-          },
+          rowCount: result.lineItems.length,
+          checksum: result.checksum,
+          sourceMetadata: result.sourceMetadata as Prisma.InputJsonValue,
+          createdBy: userId,
         },
-        select: { id: true },
       });
 
-      if (oldBatches.length > 0) {
-        await tx.billingIngestionBatch.deleteMany({
-          where: { id: { in: oldBatches.map((batch) => batch.id) } },
-        });
-      }
+      // Bulk insert line items
+      await tx.billingLineItem.createMany({
+        data: result.lineItems.map((item) => ({
+          ingestionBatchId: newBatch.id,
+          provider: item.provider,
+          sourceType: item.sourceType,
+          accountId: item.accountId,
+          subaccountId: item.subaccountId,
+          resourceId: item.resourceId,
+          productId: item.productId,
+          meterId: item.meterId,
+          usageAmount: item.usageAmount,
+          usageUnit: item.usageUnit,
+          cost: item.cost,
+          listCost: item.listCost,
+          currency: item.currency,
+          usageStartTime: item.usageStartTime,
+          usageEndTime: item.usageEndTime,
+          invoiceMonth: item.invoiceMonth,
+          region: item.region,
+          tags: item.tags as Prisma.InputJsonValue,
+          rawPayload: item.rawPayload as Prisma.InputJsonValue,
+        })),
+      });
+
+      return newBatch;
+    },
+    {
+      maxWait: 10_000,
+      timeout: 30_000,
     }
-
-    const newBatch = await tx.billingIngestionBatch.create({
-      data: {
-        provider: adapter.provider,
-        sourceType: adapter.sourceType,
-        invoiceMonth: month,
-        rowCount: result.lineItems.length,
-        checksum: result.checksum,
-        sourceMetadata: result.sourceMetadata as Prisma.InputJsonValue,
-        createdBy: userId,
-      },
-    });
-
-    // Bulk insert line items
-    await tx.billingLineItem.createMany({
-      data: result.lineItems.map((item) => ({
-        ingestionBatchId: newBatch.id,
-        provider: item.provider,
-        sourceType: item.sourceType,
-        accountId: item.accountId,
-        subaccountId: item.subaccountId,
-        resourceId: item.resourceId,
-        productId: item.productId,
-        meterId: item.meterId,
-        usageAmount: item.usageAmount,
-        usageUnit: item.usageUnit,
-        cost: item.cost,
-        listCost: item.listCost,
-        currency: item.currency,
-        usageStartTime: item.usageStartTime,
-        usageEndTime: item.usageEndTime,
-        invoiceMonth: item.invoiceMonth,
-        region: item.region,
-        tags: item.tags as Prisma.InputJsonValue,
-        rawPayload: item.rawPayload as Prisma.InputJsonValue,
-      })),
-    });
-
-    return newBatch;
-  });
+  );
 
   console.log(`Ingested ${result.lineItems.length} line items from ${adapter.provider} for ${month}`);
   return { batchId: batch.id, rowCount: batch.rowCount };
