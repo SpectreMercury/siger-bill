@@ -245,6 +245,29 @@ export async function ingestFromAdapter(
 
   // Create ingestion batch and line items in transaction
   const batch = await prisma.$transaction(async (tx) => {
+    const sourceMetadata = result.sourceMetadata as Record<string, unknown>;
+    const source = typeof sourceMetadata?.source === 'string' ? sourceMetadata.source : null;
+    if (source) {
+      const oldBatches = await tx.billingIngestionBatch.findMany({
+        where: {
+          provider: adapter.provider,
+          sourceType: adapter.sourceType,
+          invoiceMonth: month,
+          sourceMetadata: {
+            path: ['source'],
+            equals: source,
+          },
+        },
+        select: { id: true },
+      });
+
+      if (oldBatches.length > 0) {
+        await tx.billingIngestionBatch.deleteMany({
+          where: { id: { in: oldBatches.map((batch) => batch.id) } },
+        });
+      }
+    }
+
     const newBatch = await tx.billingIngestionBatch.create({
       data: {
         provider: adapter.provider,
