@@ -23,7 +23,7 @@ export default function LoginPage() {
   useEffect(() => {
     // Wait for auth state to be loaded before checking
     if (!authLoading && isAuthenticated) {
-      router.push('/');
+      router.replace('/dashboard');
     }
   }, [authLoading, isAuthenticated, router]);
 
@@ -52,7 +52,7 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
-      router.push('/');
+      router.replace('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : t('auth.loginFailed'));
     } finally {

@@ -1,7 +1,12 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { api, isAuthenticated, logout as apiLogout, clearAuthToken } from '@/lib/client/api';
+import {
+  api,
+  isAuthenticated as hasStoredAuthToken,
+  logout as apiLogout,
+  clearAuthToken,
+} from '@/lib/client/api';
 import { User } from '@/lib/client/types';
 
 interface AuthContextValue {
@@ -31,7 +36,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshUser = useCallback(async () => {
-    if (!isAuthenticated()) {
+    if (!hasStoredAuthToken()) {
       setUser(null);
       setIsLoading(false);
       return;
@@ -55,8 +60,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const login = useCallback(async (email: string, password: string) => {
     const { login: apiLogin } = await import('@/lib/client/api');
-    await apiLogin(email, password);
-    await refreshUser();
+    setIsLoading(true);
+    try {
+      await apiLogin(email, password);
+      await refreshUser();
+    } catch (error) {
+      clearAuthToken();
+      setUser(null);
+      setIsLoading(false);
+      throw error;
+    }
   }, [refreshUser]);
 
   const logout = useCallback(() => {
@@ -95,6 +108,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const isSuperAdmin = user?.isSuperAdmin ?? false;
   const isFinance = hasRole('finance') || isSuperAdmin;
   const isAdmin = hasRole('admin') || isSuperAdmin;
+  const hasToken = hasStoredAuthToken();
+  const effectiveIsLoading = isLoading || (hasToken && !user);
 
   const scopedCustomerIds = (user?.scopes ?? [])
     .filter((s) => s.scopeType === 'CUSTOMER')
@@ -102,7 +117,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const value: AuthContextValue = {
     user,
-    isLoading,
+    isLoading: effectiveIsLoading,
     isAuthenticated: !!user,
     login,
     logout,
