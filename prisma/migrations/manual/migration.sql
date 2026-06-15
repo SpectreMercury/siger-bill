@@ -1,0 +1,3 @@
+-- This directory stores manual SQL references that predate Prisma migration
+-- deployment. Keep this migration as a no-op so `prisma migrate deploy` can
+-- scan the directory without failing on a missing migration.sql.

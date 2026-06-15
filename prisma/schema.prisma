@@ -366,7 +366,7 @@ model RawCostEntry {
   skuId            String   @map("sku_id") @db.VarChar(100)
   usageStartTime   DateTime @map("usage_start_time") @db.Timestamptz
   usageEndTime     DateTime @map("usage_end_time") @db.Timestamptz
-  usageAmount      Decimal  @map("usage_amount") @db.Decimal(24, 10)
+  usageAmount      Decimal  @map("usage_amount") @db.Decimal(30, 10)
   cost             Decimal  @db.Decimal(18, 10)
   currency         String   @db.VarChar(3)
   region           String?  @db.VarChar(50)
@@ -430,7 +430,7 @@ model BillingLineItem {
   meterId   String @map("meter_id") @db.VarChar(100) // GCP SKU, AWS usage type, OpenAI endpoint
 
   // Usage metrics
-  usageAmount Decimal @map("usage_amount") @db.Decimal(24, 10)
+  usageAmount Decimal @map("usage_amount") @db.Decimal(30, 10)
   usageUnit   String  @map("usage_unit") @db.VarChar(50) // hours, GB, tokens, requests
 
   // Cost data
