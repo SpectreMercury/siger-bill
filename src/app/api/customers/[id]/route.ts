@@ -20,6 +20,7 @@ import {
   notFound,
   forbidden,
   serverError,
+  validationError,
 } from '@/lib/utils';
 
 /**
@@ -87,10 +88,7 @@ export const PUT = withPermission(
       // Validate request body
       const validation = await validateBody(request, updateCustomerSchema);
       if (!validation.success) {
-        return NextResponse.json(
-          { error: 'Validation failed', details: validation.error.flatten() },
-          { status: 400 }
-        );
+        return validationError(validation.error);
       }
 
       const existing = await prisma.customer.findUnique({

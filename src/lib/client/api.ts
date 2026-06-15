@@ -25,6 +25,37 @@ export class ApiError extends Error {
   }
 }
 
+function collectApiDetailMessages(details?: Record<string, unknown>): string[] {
+  if (!details) return [];
+
+  const fieldErrors = (
+    details.fieldErrors &&
+    typeof details.fieldErrors === 'object' &&
+    !Array.isArray(details.fieldErrors)
+  )
+    ? details.fieldErrors as Record<string, unknown>
+    : details;
+
+  return Object.entries(fieldErrors).flatMap(([field, messages]) => {
+    if (!Array.isArray(messages)) return [];
+    return messages
+      .filter((message): message is string => typeof message === 'string')
+      .map((message) => `${field}: ${message}`);
+  });
+}
+
+export function formatApiError(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    const detailMessages = collectApiDetailMessages(error.details);
+    if (detailMessages.length > 0) {
+      return `${error.message}: ${detailMessages.join('; ')}`;
+    }
+    return error.message || fallback;
+  }
+
+  return error instanceof Error ? error.message : fallback;
+}
+
 /**
  * Get stored auth token
  */

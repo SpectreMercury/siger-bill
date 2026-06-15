@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { api } from '@/lib/client/api';
+import { api, formatApiError } from '@/lib/client/api';
 import { Customer } from '@/lib/client/types';
 import { Alert, StatusBadge } from '@/components/ui';
 import { Button } from '@/components/ui/shadcn/button';
@@ -86,7 +86,7 @@ export default function CustomerDetailPage() {
       fetchCustomer();
     } catch (err) {
       console.error('Error saving customer:', err);
-      setError('Failed to save customer');
+      setError(formatApiError(err, 'Failed to save customer'));
     } finally {
       setIsSaving(false);
     }

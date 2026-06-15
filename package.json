@@ -16,7 +16,8 @@
     "db:seed": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts",
     "db:seed:mock": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed-mock-data.ts",
     "db:reset": "prisma migrate reset --force",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "test:customer-validation": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-customer-validation.ts"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^8.1.1",

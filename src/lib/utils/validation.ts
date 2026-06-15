@@ -16,6 +16,28 @@ export const patterns = {
   currency: z.string().length(3).toUpperCase(),
 };
 
+const blankStringToUndefined = (value: unknown) => {
+  if (typeof value === 'string' && value.trim() === '') return undefined;
+  return value;
+};
+
+const blankStringToNull = (value: unknown) => {
+  if (typeof value === 'string' && value.trim() === '') return null;
+  return value;
+};
+
+const optionalText = (max: number) =>
+  z.preprocess(blankStringToUndefined, z.string().trim().max(max).optional());
+
+const nullableText = (max: number) =>
+  z.preprocess(blankStringToNull, z.string().trim().max(max).nullable().optional());
+
+const optionalEmail = () =>
+  z.preprocess(blankStringToUndefined, z.string().trim().email().optional());
+
+const nullableEmail = () =>
+  z.preprocess(blankStringToNull, z.string().trim().email().nullable().optional());
+
 /**
  * Login request schema
  */
@@ -29,13 +51,13 @@ export const loginSchema = z.object({
  */
 export const createCustomerSchema = z.object({
   name: z.string().min(1, 'Name is required').max(255),
-  externalId: z.string().max(100).optional(),
-  billingAccountId: z.string().max(100).optional(),
-  domain: z.string().max(255).optional(),
+  externalId: optionalText(100),
+  billingAccountId: optionalText(100),
+  domain: optionalText(255),
   currency: patterns.currency.default('USD'),
   paymentTermsDays: z.number().int().min(0).max(365).default(30),
-  primaryContactName: z.string().max(255).optional(),
-  primaryContactEmail: z.string().email().optional(),
+  primaryContactName: optionalText(255),
+  primaryContactEmail: optionalEmail(),
   gcpConnectionId: z.string().uuid().optional().nullable(),
   /** GCP project IDs — auto-creates projects + customer bindings */
   projectIds: z.array(z.string().min(1).max(100)).optional().default([]),
@@ -46,13 +68,13 @@ export const createCustomerSchema = z.object({
  */
 export const updateCustomerSchema = z.object({
   name: z.string().min(1).max(255).optional(),
-  externalId: z.string().max(100).optional().nullable(),
-  billingAccountId: z.string().max(100).optional().nullable(),
-  domain: z.string().max(255).optional().nullable(),
+  externalId: nullableText(100),
+  billingAccountId: nullableText(100),
+  domain: nullableText(255),
   currency: patterns.currency.optional(),
   paymentTermsDays: z.number().int().min(0).max(365).optional(),
-  primaryContactName: z.string().max(255).optional().nullable(),
-  primaryContactEmail: z.string().email().optional().nullable(),
+  primaryContactName: nullableText(255),
+  primaryContactEmail: nullableEmail(),
   status: z.enum(['ACTIVE', 'SUSPENDED', 'TERMINATED']).optional(),
   gcpConnectionId: z.string().uuid().optional().nullable(),
 });

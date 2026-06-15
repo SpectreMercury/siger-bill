@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { ColumnDef } from '@tanstack/react-table';
-import { api } from '@/lib/client/api';
+import { api, formatApiError } from '@/lib/client/api';
 import { Customer, PaginatedResponse } from '@/lib/client/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { DataTable, StatusBadge, Alert } from '@/components/ui';
@@ -246,7 +246,7 @@ export default function CustomersPage() {
       fetchCustomers();
     } catch (err) {
       console.error('Error saving customer:', err);
-      setError('Failed to save customer');
+      setError(formatApiError(err, 'Failed to save customer'));
     } finally {
       setIsSaving(false);
     }
