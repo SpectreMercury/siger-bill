@@ -52,6 +52,8 @@ import {
   createLineItemsChecksum,
 } from './adapters';
 
+const BILLING_LINE_ITEM_INSERT_CHUNK_SIZE = 1_000;
+
 /**
  * Options for the unified billing engine
  */
@@ -281,36 +283,39 @@ export async function ingestFromAdapter(
         },
       });
 
-      // Bulk insert line items
-      await tx.billingLineItem.createMany({
-        data: result.lineItems.map((item) => ({
-          ingestionBatchId: newBatch.id,
-          provider: item.provider,
-          sourceType: item.sourceType,
-          accountId: item.accountId,
-          subaccountId: item.subaccountId,
-          resourceId: item.resourceId,
-          productId: item.productId,
-          meterId: item.meterId,
-          usageAmount: item.usageAmount,
-          usageUnit: item.usageUnit,
-          cost: item.cost,
-          listCost: item.listCost,
-          currency: item.currency,
-          usageStartTime: item.usageStartTime,
-          usageEndTime: item.usageEndTime,
-          invoiceMonth: item.invoiceMonth,
-          region: item.region,
-          tags: item.tags as Prisma.InputJsonValue,
-          rawPayload: item.rawPayload as Prisma.InputJsonValue,
-        })),
-      });
+      for (let offset = 0; offset < result.lineItems.length; offset += BILLING_LINE_ITEM_INSERT_CHUNK_SIZE) {
+        const chunk = result.lineItems.slice(offset, offset + BILLING_LINE_ITEM_INSERT_CHUNK_SIZE);
+
+        await tx.billingLineItem.createMany({
+          data: chunk.map((item) => ({
+            ingestionBatchId: newBatch.id,
+            provider: item.provider,
+            sourceType: item.sourceType,
+            accountId: item.accountId,
+            subaccountId: item.subaccountId,
+            resourceId: item.resourceId,
+            productId: item.productId,
+            meterId: item.meterId,
+            usageAmount: item.usageAmount,
+            usageUnit: item.usageUnit,
+            cost: item.cost,
+            listCost: item.listCost,
+            currency: item.currency,
+            usageStartTime: item.usageStartTime,
+            usageEndTime: item.usageEndTime,
+            invoiceMonth: item.invoiceMonth,
+            region: item.region,
+            tags: item.tags as Prisma.InputJsonValue,
+            rawPayload: item.rawPayload as Prisma.InputJsonValue,
+          })),
+        });
+      }
 
       return newBatch;
     },
     {
       maxWait: 10_000,
-      timeout: 30_000,
+      timeout: 240_000,
     }
   );
 

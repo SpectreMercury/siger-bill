@@ -29,6 +29,8 @@ import { ingestFromAdapter } from '@/lib/billing/unified-engine';
 import { hasCustomerScope, getCustomerScopes } from '@/lib/auth/context';
 import { z } from 'zod';
 
+export const maxDuration = 300;
+
 const fetchSchema = z.object({
   billingMonth: z.string().regex(/^\d{4}-\d{2}$/, 'Must be YYYY-MM format'),
   connectionId: z.string().uuid().optional(),

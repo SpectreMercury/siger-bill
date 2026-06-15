@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/shadcn/input';
 import { Label } from '@/components/ui/shadcn/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/shadcn/select';
 import { Badge } from '@/components/ui/shadcn/badge';
-import { Download, Loader2, RotateCcw } from 'lucide-react';
+import { CloudDownload, Download, Loader2, RotateCcw } from 'lucide-react';
 
 type BillingCell = string | number | null;
 
@@ -24,6 +24,18 @@ interface MonthlyBillingResponse {
     total: number;
     totalPages: number;
   };
+}
+
+interface BillingFetchResponse {
+  billingMonth: string;
+  totalRows: number;
+  batches?: Array<{
+    connectionId: string;
+    connectionName: string;
+    batchId: string;
+    rowCount: number;
+  }>;
+  errors?: string[];
 }
 
 function defaultBillingMonth() {
@@ -47,7 +59,9 @@ export default function MonthlyBillingPage() {
   const [totalPages, setTotalPages] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   const selectedCustomerId = customerId === 'all' ? undefined : customerId;
 
@@ -132,6 +146,32 @@ export default function MonthlyBillingPage() {
     }
   };
 
+  const handleSyncBigQuery = async () => {
+    setIsSyncing(true);
+    setError(null);
+    setSyncMessage(null);
+    try {
+      const response = await api.post<BillingFetchResponse>('/billing/fetch', {
+        billingMonth,
+      });
+
+      if (response.errors && response.errors.length > 0) {
+        throw new Error(response.errors.join('; '));
+      }
+
+      setSyncMessage(t('syncSuccess', { count: response.totalRows }));
+      setPage(1);
+      if (page === 1) {
+        await fetchRows();
+      }
+    } catch (err) {
+      console.error('Failed to sync BigQuery billing:', err);
+      setError(err instanceof Error ? err.message : t('syncFailed'));
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const resetPageAndFetch = () => {
     setPage(1);
     if (page === 1) fetchRows();
@@ -145,6 +185,14 @@ export default function MonthlyBillingPage() {
           <p className="text-muted-foreground text-sm mt-1">{t('subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={handleSyncBigQuery} disabled={isSyncing || isLoading}>
+            {isSyncing ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <CloudDownload className="h-4 w-4 mr-2" />
+            )}
+            {t('syncBigQuery')}
+          </Button>
           <Button variant="outline" onClick={fetchRows} disabled={isLoading}>
             <RotateCcw className="h-4 w-4 mr-2" />
             {tc('refresh')}
@@ -163,6 +211,12 @@ export default function MonthlyBillingPage() {
       {error && (
         <Alert variant="error" onClose={() => setError(null)}>
           {error}
+        </Alert>
+      )}
+
+      {syncMessage && (
+        <Alert variant="success" onClose={() => setSyncMessage(null)}>
+          {syncMessage}
         </Alert>
       )}
 
