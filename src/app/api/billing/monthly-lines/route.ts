@@ -8,8 +8,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withPermission } from '@/lib/middleware';
 import { badRequest, serverError, success } from '@/lib/utils';
+import { TEMPLATE_HEADERS } from '@/lib/billing/monthly-template';
 import {
-  TEMPLATE_HEADERS,
   buildBillingTemplateRowsForMonth,
 } from '@/lib/invoice-presentation/exporters/xlsx';
 
@@ -37,6 +37,7 @@ export const GET = withPermission(
       return success({
         headers: TEMPLATE_HEADERS,
         rows: result.rows.slice(1),
+        activeOverride: result.activeOverride ?? null,
         pagination: {
           page: result.page,
           limit: result.limit,

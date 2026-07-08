@@ -10,6 +10,7 @@ import { prisma } from '@/lib/db';
 import { withAuthParams } from '@/lib/middleware';
 import { success, notFound, serverError } from '@/lib/utils';
 import { gcpFetchHeaders, ServiceAccountCreds, ApiKeyCreds } from '@/lib/gcp/auth';
+import { formatCloudBillingApiError } from '@/lib/gcp/cloud-billing-errors';
 
 function forbidden() {
   return NextResponse.json({ error: 'Super admin access required' }, { status: 403 });
@@ -52,10 +53,16 @@ export const POST = withAuthParams(async (_request: NextRequest, context): Promi
 
     if (!gcpRes.ok) {
       const errBody = await gcpRes.text().catch(() => '');
+      const formattedError = formatCloudBillingApiError(
+        gcpRes.status,
+        errBody,
+        conn.billingJobProjectId || conn.billingProjectId
+      );
       return success({
         ok: false,
         statusCode: gcpRes.status,
-        error: `GCP API returned ${gcpRes.status}: ${errBody.slice(0, 200)}`,
+        code: formattedError.code,
+        error: formattedError.message,
       });
     }
 

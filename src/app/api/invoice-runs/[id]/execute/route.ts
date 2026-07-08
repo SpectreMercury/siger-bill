@@ -26,6 +26,11 @@ import { withPermission } from '@/lib/middleware';
 import { logInvoiceRunComplete, logInvoiceRunFailed } from '@/lib/audit';
 import { executeInvoiceRun, executeUnifiedInvoiceRun, ingestFromAdapter } from '@/lib/billing';
 import { createGcpBigQueryAdapterFromConnection } from '@/lib/billing/adapters/gcp-bigquery';
+import { findActiveBillingMonthlyOverride } from '@/lib/billing/monthly-overrides';
+import {
+  findActiveBigQueryProjectOverlaps,
+  getBillingMonthLockReason,
+} from '@/lib/billing/active-sources';
 import { generateAnalyticsSnapshots } from '@/lib/analytics/pipeline';
 import { success, serverError, notFound, badRequest } from '@/lib/utils';
 import { BillingProvider, BillingSourceType, InvoiceRunStatus } from '@prisma/client';
@@ -93,22 +98,75 @@ export const POST = withPermission(
       }
 
       const useBigQuery = body?.source === 'bigquery';
+      const targetCustomerId = body?.targetCustomerId ?? invoiceRun.targetCustomerId ?? undefined;
+      const activeOverride = !useBigQuery && body?.source !== 'raw_cost'
+        ? await findActiveBillingMonthlyOverride(invoiceRun.billingMonth, targetCustomerId)
+        : null;
+      let sourceConflicts: Awaited<ReturnType<typeof findActiveBigQueryProjectOverlaps>> = [];
 
       // If source is bigquery, auto-fetch data from BigQuery first
       if (useBigQuery) {
-        // Find all active connections with billing config
-        const connections = await prisma.gcpConnection.findMany({
-          where: {
-            isActive: true,
-            billingProjectId: { not: null },
-            billingDatasetId: { not: null },
-            billingTableName: { not: null },
-          },
-        });
+        let connections: Array<{
+          id: string;
+          name: string;
+          billingProjectId: string | null;
+          billingJobProjectId: string | null;
+          billingDatasetId: string | null;
+          billingTableName: string | null;
+          billingAccountIds: string[];
+          credentials: unknown;
+          authType: string;
+        }>;
+
+        if (targetCustomerId) {
+          const customer = await prisma.customer.findUnique({
+            where: { id: targetCustomerId },
+            select: { gcpConnectionId: true, name: true },
+          });
+          if (!customer) return notFound('Target customer not found');
+          if (!customer.gcpConnectionId) {
+            return badRequest(`Customer "${customer.name}" has no GCP connection assigned`);
+          }
+
+          const connection = await prisma.gcpConnection.findFirst({
+            where: { id: customer.gcpConnectionId, isActive: true },
+          });
+          if (!connection) return notFound('Target customer GCP connection not found or inactive');
+          connections = [connection];
+        } else {
+          connections = await prisma.gcpConnection.findMany({
+            where: {
+              isActive: true,
+              billingProjectId: { not: null },
+              billingDatasetId: { not: null },
+              billingTableName: { not: null },
+            },
+          });
+        }
 
         if (connections.length === 0) {
           return badRequest(
             'No GCP connections with BigQuery billing config found. Configure billing settings on at least one connection.'
+          );
+        }
+
+        const affectedCustomers = await prisma.customer.findMany({
+          where: { gcpConnectionId: { in: connections.map((conn) => conn.id) } },
+          select: { id: true },
+        });
+        const affectedCustomerIds = affectedCustomers.map((customer) => customer.id);
+        const lockReason = await getBillingMonthLockReason(
+          invoiceRun.billingMonth,
+          affectedCustomerIds.length > 0 ? { customerIds: affectedCustomerIds } : {}
+        );
+        if (lockReason) {
+          return NextResponse.json(
+            {
+              error: lockReason,
+              code: 'LOCKED_BILLING_MONTH',
+              timestamp: new Date().toISOString(),
+            },
+            { status: 409 }
           );
         }
 
@@ -127,11 +185,42 @@ export const POST = withPermission(
             // Continue with other connections
           }
         }
+
+        sourceConflicts = await findActiveBigQueryProjectOverlaps(
+          invoiceRun.billingMonth,
+          affectedCustomerIds.length > 0 ? { customerIds: affectedCustomerIds } : {}
+        );
+        if (sourceConflicts.length > 0) {
+          return NextResponse.json(
+            {
+              error: `Overlapping BigQuery sources found for ${sourceConflicts.length} project(s). Resolve source mappings before executing invoices.`,
+              code: 'OVERLAPPING_BIGQUERY_SOURCES',
+              details: {
+                sourceConflictCount: sourceConflicts.length,
+                sourceConflicts: sourceConflicts.slice(0, 20),
+              },
+              timestamp: new Date().toISOString(),
+            },
+            { status: 409 }
+          );
+        }
       }
 
       // Execute the appropriate billing engine
       let result;
-      if (useBigQuery) {
+      if (activeOverride) {
+        result = await executeUnifiedInvoiceRun(
+          invoiceRunId,
+          invoiceRun.billingMonth,
+          {
+            provider: BillingProvider.GCP,
+            sourceType: BillingSourceType.MANUAL_IMPORT,
+            ingestionBatchId: activeOverride.billingIngestionBatchId,
+            targetCustomerId,
+            userId: context.auth.userId,
+          }
+        );
+      } else if (useBigQuery) {
         // Use unified engine which reads from BillingLineItem table
         result = await executeUnifiedInvoiceRun(
           invoiceRunId,
@@ -139,7 +228,7 @@ export const POST = withPermission(
           {
             provider: BillingProvider.GCP,
             sourceType: BillingSourceType.BIGQUERY_EXPORT,
-            targetCustomerId: body?.targetCustomerId,
+            targetCustomerId,
             userId: context.auth.userId,
           }
         );
@@ -150,7 +239,7 @@ export const POST = withPermission(
           invoiceRun.billingMonth,
           {
             ingestionBatchId: body?.ingestionBatchId,
-            targetCustomerId: body?.targetCustomerId,
+            targetCustomerId,
           }
         );
       }

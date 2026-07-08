@@ -3,7 +3,7 @@
 # Phase 3.3: Credits Engine Test Script
 #
 # Tests the complete credits workflow:
-# 1. Create credits for a customer (PROMOTION, CONTRACT, FLEX types)
+# 1. Create credits for a customer (PROMOTION, COMMITTED_USAGE_DISCOUNT types)
 # 2. List and query credits
 # 3. Run invoice run to apply credits
 # 4. Verify credit ledger entries
@@ -105,7 +105,7 @@ PROMO_CREDIT=$(curl -s -X POST "$BASE_URL/api/customers/$CUSTOMER_ID/credits" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d "{
-    \"type\": \"PROMOTION\",
+    \"types\": [\"PROMOTION\"],
     \"totalAmount\": 50.00,
     \"currency\": \"USD\",
     \"validFrom\": \"${YEAR}-${MONTH}-01\",
@@ -123,7 +123,7 @@ else
   info "Response: $PROMO_CREDIT"
 fi
 
-# Credit 2: CONTRACT credit ($100, valid for 3 months, carry-over allowed)
+# Credit 2: COMMITTED_USAGE_DISCOUNT credit ($100, valid for 3 months, carry-over allowed)
 VALID_TO_MONTH=$((MONTH + 2))
 if [ $VALID_TO_MONTH -gt 12 ]; then
   VALID_TO_YEAR=$((YEAR + 1))
@@ -138,20 +138,20 @@ CONTRACT_CREDIT=$(curl -s -X POST "$BASE_URL/api/customers/$CUSTOMER_ID/credits"
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d "{
-    \"type\": \"CONTRACT\",
+    \"types\": [\"COMMITTED_USAGE_DISCOUNT\"],
     \"totalAmount\": 100.00,
     \"currency\": \"USD\",
     \"validFrom\": \"${YEAR}-${MONTH}-01\",
     \"validTo\": \"${VALID_TO_YEAR}-${VALID_TO_MONTH}-28\",
     \"allowCarryOver\": true,
-    \"sourceReference\": \"CONTRACT-2026-001\",
+    \"sourceReference\": \"COMMIT-2026-001\",
     \"description\": \"Contractual committed credit - multi-month\"
   }")
 
 CONTRACT_CREDIT_ID=$(echo "$CONTRACT_CREDIT" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
 
 if [ -n "$CONTRACT_CREDIT_ID" ]; then
-  ok "Created CONTRACT credit: \$100 (ID: $CONTRACT_CREDIT_ID)"
+  ok "Created COMMITTED_USAGE_DISCOUNT credit: \$100 (ID: $CONTRACT_CREDIT_ID)"
 else
   info "Response: $CONTRACT_CREDIT"
 fi
@@ -171,9 +171,9 @@ if [ "$CREDIT_COUNT" -gt 0 ]; then
 
   # Show credit summary
   echo -e "${CYAN}   Credit Summary:${NC}"
-  echo "$CREDITS_LIST" | grep -o '"type":"[^"]*"' | while read -r line; do
+  echo "$CREDITS_LIST" | grep -o '"types":\[[^]]*\]' | while read -r line; do
     TYPE=$(echo "$line" | cut -d'"' -f4)
-    echo -e "${CYAN}   - Type: $TYPE${NC}"
+    echo -e "${CYAN}   - Types: $TYPE${NC}"
   done
 else
   fail "No credits found"
@@ -322,7 +322,7 @@ if [ -n "$RUN_ID" ]; then
 
     # Expected calculations:
     # Raw total: $200 (no pricing rules applied since SKUs are new)
-    # Credits: $50 (PROMO) + $100 (CONTRACT) = $150 max
+    # Credits: $50 (PROMO) + $100 (COMMITTED_USAGE_DISCOUNT) = $150 max
     # But PROMO credit (no carry-over) applies first due to earlier validFrom
     # Final: $200 - $150 = $50
     info "Expected: \$200 raw - \$150 credits = \$50 final"
@@ -361,7 +361,7 @@ if [ -n "$CONTRACT_CREDIT_ID" ]; then
   CONTRACT_REMAINING=$(echo "$CONTRACT_DETAIL" | grep -o '"remainingAmount":"[^"]*"' | cut -d'"' -f4)
   CONTRACT_STATUS=$(echo "$CONTRACT_DETAIL" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
 
-  ok "CONTRACT credit: remaining=\$$CONTRACT_REMAINING, status=$CONTRACT_STATUS"
+  ok "COMMITTED_USAGE_DISCOUNT credit: remaining=\$$CONTRACT_REMAINING, status=$CONTRACT_STATUS"
 fi
 
 # ============================================================================
@@ -441,7 +441,7 @@ curl -X POST http://localhost:3000/api/customers/{CUSTOMER_ID}/credits \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
-    "type": "PROMOTION",
+    "types": ["PROMOTION"],
     "totalAmount": 50.00,
     "currency": "USD",
     "validFrom": "2026-04-01",
@@ -481,9 +481,12 @@ curl -X POST http://localhost:3000/api/invoice-runs/{RUN_ID}/execute \
 # }
 
 # Credit types:
+# - FEE_UTILIZATION_OFFSET: Fee utilization offsets
+# - DISCOUNT: Generic discounts
 # - PROMOTION: Marketing/promotional credits
-# - CONTRACT: Contractual committed credits
-# - FLEX: Flexible/discretionary credits
+# - SUSTAINED_USAGE_DISCOUNT: Sustained usage discounts
+# - COMMITTED_USAGE_DISCOUNT: Committed usage discounts
+# - COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE: Dollar-based committed usage discounts
 
 # allowCarryOver behavior:
 # - false: Credit can only be used in its starting month

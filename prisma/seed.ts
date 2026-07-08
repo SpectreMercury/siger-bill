@@ -96,7 +96,7 @@ interface PermissionDefinition {
 // All resources and their available actions
 const RESOURCES = [
   'users', 'roles', 'customers', 'invoices', 'invoice_runs', 'audit_logs',
-  'billing_accounts', 'projects', 'customer_projects', 'raw_cost'
+  'billing_accounts', 'projects', 'customer_projects', 'raw_cost', 'credits'
 ] as const;
 const ACTIONS = ['create', 'read', 'update', 'delete', 'list'] as const;
 
@@ -150,6 +150,7 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'projects:create', 'projects:read', 'projects:update', 'projects:list',
     'customer_projects:create', 'customer_projects:read', 'customer_projects:list', 'customer_projects:bind', 'customer_projects:unbind',
     'raw_cost:read', 'raw_cost:list', 'raw_cost:import',
+    'credits:create', 'credits:read', 'credits:update', 'credits:delete', 'credits:list',
   ],
 
   // Finance focuses on billing operations
@@ -163,6 +164,7 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'projects:read', 'projects:list',
     'customer_projects:read', 'customer_projects:list', 'customer_projects:bind', 'customer_projects:unbind',
     'raw_cost:read', 'raw_cost:list', 'raw_cost:import',
+    'credits:create', 'credits:read', 'credits:update', 'credits:list',
   ],
 
   // Viewer is read-only
@@ -176,6 +178,7 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'projects:read', 'projects:list',
     'customer_projects:read', 'customer_projects:list',
     'raw_cost:read', 'raw_cost:list',
+    'credits:read', 'credits:list',
   ],
 };
 

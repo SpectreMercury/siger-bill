@@ -54,6 +54,11 @@ import {
 
 const BILLING_LINE_ITEM_INSERT_CHUNK_SIZE = 1_000;
 
+type BillingSourceIdentity = {
+  sourceKey: string | null;
+  source: string | null;
+};
+
 /**
  * Options for the unified billing engine
  */
@@ -110,6 +115,47 @@ export interface UnifiedBillingResult {
     totalSpecialRulesDelta: string;
     specialRulesCount: number;
   };
+}
+
+function getBillingSourceIdentity(sourceMetadata: Record<string, unknown>): BillingSourceIdentity {
+  const sourceKey = typeof sourceMetadata.sourceKey === 'string' ? sourceMetadata.sourceKey : null;
+  const source = typeof sourceMetadata.source === 'string' ? sourceMetadata.source : null;
+  return { sourceKey, source };
+}
+
+function buildSameSourceBatchWhere(params: {
+  provider: BillingProvider;
+  sourceType: BillingSourceType;
+  invoiceMonth: string;
+  sourceIdentity: BillingSourceIdentity;
+}): Prisma.BillingIngestionBatchWhereInput {
+  const base: Prisma.BillingIngestionBatchWhereInput = {
+    provider: params.provider,
+    sourceType: params.sourceType,
+    invoiceMonth: params.invoiceMonth,
+  };
+
+  const sourceFilters: Prisma.BillingIngestionBatchWhereInput[] = [];
+  if (params.sourceIdentity.sourceKey) {
+    sourceFilters.push({
+      sourceMetadata: {
+        path: ['sourceKey'],
+        equals: params.sourceIdentity.sourceKey,
+      },
+    });
+  }
+  if (params.sourceIdentity.source) {
+    sourceFilters.push({
+      sourceMetadata: {
+        path: ['source'],
+        equals: params.sourceIdentity.source,
+      },
+    });
+  }
+
+  if (sourceFilters.length === 0) return base;
+  if (sourceFilters.length === 1) return { ...base, ...sourceFilters[0] };
+  return { ...base, OR: sourceFilters };
 }
 
 /**
@@ -230,97 +276,163 @@ export async function ingestFromAdapter(
     throw new Error(`No billing data fetched from ${adapter.provider} for ${month}`);
   }
 
-  // Check for duplicate batch (same provider + checksum + month + sourceType)
-  const existingBatch = await prisma.billingIngestionBatch.findFirst({
-    where: {
-      provider: adapter.provider,
-      sourceType: adapter.sourceType,
-      invoiceMonth: month,
-      checksum: result.checksum,
-    },
+  const accountIdsForNames = Array.from(new Set(result.lineItems.map((item) => item.accountId)));
+  const billingAccounts = await prisma.billingAccount.findMany({
+    where: { billingAccountId: { in: accountIdsForNames } },
+    select: { billingAccountId: true, name: true },
   });
+  const billingAccountNameById = new Map(
+    billingAccounts.map((account) => [account.billingAccountId, account.name])
+  );
 
-  if (existingBatch) {
-    console.log(`Batch already exists for ${adapter.provider} ${month} with same checksum`);
-    return { batchId: existingBatch.id, rowCount: existingBatch.rowCount };
-  }
+  const sourceMetadata = result.sourceMetadata as Record<string, unknown>;
+  const sourceIdentity = getBillingSourceIdentity(sourceMetadata);
+  const sameSourceWhere = buildSameSourceBatchWhere({
+    provider: adapter.provider,
+    sourceType: adapter.sourceType,
+    invoiceMonth: month,
+    sourceIdentity,
+  });
+  const uniqueBatchWhere = {
+    provider: adapter.provider,
+    sourceType: adapter.sourceType,
+    invoiceMonth: month,
+    checksum: result.checksum,
+  };
 
-  // Create ingestion batch and line items in transaction
-  const batch = await prisma.$transaction(
-    async (tx) => {
-      const sourceMetadata = result.sourceMetadata as Record<string, unknown>;
-      const source = typeof sourceMetadata?.source === 'string' ? sourceMetadata.source : null;
-      if (source) {
-        const oldBatches = await tx.billingIngestionBatch.findMany({
-          where: {
-            provider: adapter.provider,
-            sourceType: adapter.sourceType,
-            invoiceMonth: month,
-            sourceMetadata: {
-              path: ['source'],
-              equals: source,
-            },
-          },
-          select: { id: true },
-        });
-
-        if (oldBatches.length > 0) {
-          await tx.billingIngestionBatch.deleteMany({
-            where: { id: { in: oldBatches.map((batch) => batch.id) } },
-          });
-        }
-      }
-
-      const newBatch = await tx.billingIngestionBatch.create({
+  const reuseBatch = async (batchId: string, logMessage: string) => {
+    const activeBatch = await prisma.$transaction(async (tx) => {
+      await tx.billingIngestionBatch.updateMany({
+        where: {
+          ...sameSourceWhere,
+          id: { not: batchId },
+          isActive: true,
+        },
         data: {
-          provider: adapter.provider,
-          sourceType: adapter.sourceType,
-          invoiceMonth: month,
-          rowCount: result.lineItems.length,
-          checksum: result.checksum,
-          sourceMetadata: result.sourceMetadata as Prisma.InputJsonValue,
-          createdBy: userId,
+          isActive: false,
+          supersededAt: new Date(),
         },
       });
 
-      for (let offset = 0; offset < result.lineItems.length; offset += BILLING_LINE_ITEM_INSERT_CHUNK_SIZE) {
-        const chunk = result.lineItems.slice(offset, offset + BILLING_LINE_ITEM_INSERT_CHUNK_SIZE);
+      return tx.billingIngestionBatch.update({
+        where: { id: batchId },
+        data: {
+          isActive: true,
+          supersededAt: null,
+        },
+      });
+    });
 
-        await tx.billingLineItem.createMany({
-          data: chunk.map((item) => ({
-            ingestionBatchId: newBatch.id,
-            provider: item.provider,
-            sourceType: item.sourceType,
-            accountId: item.accountId,
-            subaccountId: item.subaccountId,
-            resourceId: item.resourceId,
-            productId: item.productId,
-            meterId: item.meterId,
-            usageAmount: item.usageAmount,
-            usageUnit: item.usageUnit,
-            cost: item.cost,
-            listCost: item.listCost,
-            currency: item.currency,
-            usageStartTime: item.usageStartTime,
-            usageEndTime: item.usageEndTime,
-            invoiceMonth: item.invoiceMonth,
-            region: item.region,
-            tags: item.tags as Prisma.InputJsonValue,
-            rawPayload: item.rawPayload as Prisma.InputJsonValue,
-          })),
+    console.log(logMessage);
+    return { batchId: activeBatch.id, rowCount: activeBatch.rowCount };
+  };
+
+  const existingBatch = await prisma.billingIngestionBatch.findFirst({
+    where: uniqueBatchWhere,
+  });
+
+  if (existingBatch) {
+    return reuseBatch(
+      existingBatch.id,
+      `Reusing active batch for ${adapter.provider} ${month} with same checksum`
+    );
+  }
+
+  // Create ingestion batch and line items in transaction
+  try {
+    const batch = await prisma.$transaction(
+      async (tx) => {
+        const newBatch = await tx.billingIngestionBatch.create({
+          data: {
+            provider: adapter.provider,
+            sourceType: adapter.sourceType,
+            invoiceMonth: month,
+            rowCount: result.lineItems.length,
+            checksum: result.checksum,
+            sourceMetadata: result.sourceMetadata as Prisma.InputJsonValue,
+            isActive: true,
+            supersededAt: null,
+            createdBy: userId,
+          },
         });
+
+        await tx.billingIngestionBatch.updateMany({
+          where: {
+            ...sameSourceWhere,
+            id: { not: newBatch.id },
+            isActive: true,
+          },
+          data: {
+            isActive: false,
+            supersededAt: new Date(),
+          },
+        });
+
+        for (let offset = 0; offset < result.lineItems.length; offset += BILLING_LINE_ITEM_INSERT_CHUNK_SIZE) {
+          const chunk = result.lineItems.slice(offset, offset + BILLING_LINE_ITEM_INSERT_CHUNK_SIZE);
+
+          await tx.billingLineItem.createMany({
+            data: chunk.map((item) => ({
+              ingestionBatchId: newBatch.id,
+              provider: item.provider,
+              sourceType: item.sourceType,
+              accountId: item.accountId,
+              billingAccountName: item.billingAccountName ?? billingAccountNameById.get(item.accountId) ?? null,
+              subaccountId: item.subaccountId,
+              projectName: item.projectName,
+              resourceId: item.resourceId,
+              productId: item.productId,
+              serviceDescription: item.serviceDescription,
+              meterId: item.meterId,
+              skuDescription: item.skuDescription,
+              usageAmount: item.usageAmount,
+              usageUnit: item.usageUnit,
+              pricingUsageAmount: item.pricingUsageAmount,
+              pricingUsageUnit: item.pricingUsageUnit,
+              cost: item.cost,
+              listCost: item.listCost,
+              creditAmount: item.creditAmount,
+              costAfterCredit: item.costAfterCredit,
+              currency: item.currency,
+              currencyConversionRate: item.currencyConversionRate,
+              creditBreakdown: item.creditBreakdown as Prisma.InputJsonValue,
+              transactionType: item.transactionType,
+              usageStartTime: item.usageStartTime,
+              usageEndTime: item.usageEndTime,
+              invoiceMonth: item.invoiceMonth,
+              region: item.region,
+              tags: item.tags as Prisma.InputJsonValue,
+              rawPayload: item.rawPayload as Prisma.InputJsonValue,
+            })),
+          });
+        }
+
+        return newBatch;
+      },
+      {
+        maxWait: 10_000,
+        timeout: 240_000,
       }
+    );
 
-      return newBatch;
-    },
-    {
-      maxWait: 10_000,
-      timeout: 240_000,
+    console.log(`Ingested ${result.lineItems.length} line items from ${adapter.provider} for ${month}`);
+    return { batchId: batch.id, rowCount: batch.rowCount };
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const racedBatch = await prisma.billingIngestionBatch.findFirst({
+        where: uniqueBatchWhere,
+      });
+
+      if (racedBatch) {
+        return reuseBatch(
+          racedBatch.id,
+          `Reusing active batch for ${adapter.provider} ${month} after duplicate create race`
+        );
+      }
     }
-  );
 
-  console.log(`Ingested ${result.lineItems.length} line items from ${adapter.provider} for ${month}`);
-  return { batchId: batch.id, rowCount: batch.rowCount };
+    throw error;
+  }
 }
 
 /**
@@ -384,6 +496,8 @@ export async function executeUnifiedInvoiceRun(
     if (options.ingestionBatchId) {
       lineItemFilter.ingestionBatchId = options.ingestionBatchId;
       ingestionBatchIds.add(options.ingestionBatchId);
+    } else if (options.sourceType === BillingSourceType.BIGQUERY_EXPORT) {
+      lineItemFilter.ingestionBatch = { isActive: true };
     }
 
     // Build customer filter

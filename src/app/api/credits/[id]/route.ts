@@ -45,6 +45,13 @@ export const GET = withPermission(
               name: true,
             },
           },
+          matchSkuGroup: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+            },
+          },
           ledgerEntries: {
             orderBy: { appliedAt: 'desc' },
             include: {
@@ -107,6 +114,10 @@ export const GET = withPermission(
         status: credit.status,
         sourceReference: credit.sourceReference,
         description: credit.description,
+        matchSkuId: credit.matchSkuId,
+        matchSkuGroupId: credit.matchSkuGroupId,
+        matchSkuGroup: credit.matchSkuGroup,
+        matchProjectId: credit.matchProjectId,
         createdAt: credit.createdAt,
         updatedAt: credit.updatedAt,
         ledgerHistory,
@@ -123,7 +134,7 @@ export const GET = withPermission(
  * PATCH /api/credits/:id
  *
  * Update credit properties.
- * Requires credits:write permission and customer scope.
+ * Requires credits:update permission and customer scope.
  *
  * Updateable fields:
  * - status: ACTIVE, EXPIRED, DEPLETED
@@ -132,7 +143,7 @@ export const GET = withPermission(
  * - description: Update description
  */
 export const PATCH = withPermission(
-  { resource: 'credits', action: 'write' },
+  { resource: 'credits', action: 'update' },
   async (request: NextRequest, context): Promise<NextResponse> => {
     try {
       const creditId = context.params.id;
@@ -167,12 +178,25 @@ export const PATCH = withPermission(
         }
       }
 
+      if (data.matchSkuGroupId) {
+        const skuGroup = await prisma.skuGroup.findUnique({
+          where: { id: data.matchSkuGroupId },
+          select: { id: true },
+        });
+        if (!skuGroup) {
+          return notFound('SKU group not found');
+        }
+      }
+
       // Build update object
       const updateData: Record<string, unknown> = {};
       if (data.status !== undefined) updateData.status = data.status;
       if (data.validTo !== undefined) updateData.validTo = new Date(data.validTo);
       if (data.allowCarryOver !== undefined) updateData.allowCarryOver = data.allowCarryOver;
       if (data.description !== undefined) updateData.description = data.description;
+      if (data.matchSkuId !== undefined) updateData.matchSkuId = data.matchSkuId;
+      if (data.matchSkuGroupId !== undefined) updateData.matchSkuGroupId = data.matchSkuGroupId;
+      if (data.matchProjectId !== undefined) updateData.matchProjectId = data.matchProjectId;
 
       // Nothing to update
       if (Object.keys(updateData).length === 0) {
@@ -190,6 +214,9 @@ export const PATCH = withPermission(
           status: existingCredit.status,
           sourceReference: existingCredit.sourceReference,
           description: existingCredit.description,
+          matchSkuId: existingCredit.matchSkuId,
+          matchSkuGroupId: existingCredit.matchSkuGroupId,
+          matchProjectId: existingCredit.matchProjectId,
           updatedAt: existingCredit.updatedAt,
         });
       }
@@ -219,6 +246,18 @@ export const PATCH = withPermission(
         beforeData.description = existingCredit.description;
         afterData.description = updatedCredit.description;
       }
+      if (data.matchSkuId !== undefined) {
+        beforeData.matchSkuId = existingCredit.matchSkuId;
+        afterData.matchSkuId = updatedCredit.matchSkuId;
+      }
+      if (data.matchSkuGroupId !== undefined) {
+        beforeData.matchSkuGroupId = existingCredit.matchSkuGroupId;
+        afterData.matchSkuGroupId = updatedCredit.matchSkuGroupId;
+      }
+      if (data.matchProjectId !== undefined) {
+        beforeData.matchProjectId = existingCredit.matchProjectId;
+        afterData.matchProjectId = updatedCredit.matchProjectId;
+      }
 
       // Audit log
       await logCreditUpdate(context, creditId, beforeData, afterData);
@@ -237,6 +276,9 @@ export const PATCH = withPermission(
         status: updatedCredit.status,
         sourceReference: updatedCredit.sourceReference,
         description: updatedCredit.description,
+        matchSkuId: updatedCredit.matchSkuId,
+        matchSkuGroupId: updatedCredit.matchSkuGroupId,
+        matchProjectId: updatedCredit.matchProjectId,
         updatedAt: updatedCredit.updatedAt,
       });
 

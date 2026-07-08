@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { api, getAuthToken } from '@/lib/client/api';
 import { Customer } from '@/lib/client/types';
@@ -11,13 +11,14 @@ import { Input } from '@/components/ui/shadcn/input';
 import { Label } from '@/components/ui/shadcn/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/shadcn/select';
 import { Badge } from '@/components/ui/shadcn/badge';
-import { CloudDownload, Download, Loader2, RotateCcw } from 'lucide-react';
+import { CloudDownload, Download, Loader2, RotateCcw, Upload } from 'lucide-react';
 
 type BillingCell = string | number | null;
 
 interface MonthlyBillingResponse {
   headers: string[];
   rows: BillingCell[][];
+  activeOverride: ActiveOverride | null;
   pagination: {
     page: number;
     limit: number;
@@ -26,16 +27,31 @@ interface MonthlyBillingResponse {
   };
 }
 
-interface BillingFetchResponse {
+interface ActiveOverride {
+  id: string;
+  sourceFilename: string;
+  uploadedAt: string;
+  rowCount: number;
+}
+
+type BillingSyncJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+
+interface BillingSyncJob {
+  id: string;
   billingMonth: string;
+  status: BillingSyncJobStatus;
   totalRows: number;
-  batches?: Array<{
-    connectionId: string;
-    connectionName: string;
-    batchId: string;
-    rowCount: number;
-  }>;
-  errors?: string[];
+  errors: string[];
+  errorMessage: string | null;
+  sourceConflictCount?: number;
+  sourceConflicts?: SourceConflict[];
+}
+
+interface SourceConflict {
+  projectId: string;
+  distinctSourceCount: number;
+  totalRows: number;
+  sourceLabels: string[];
 }
 
 function defaultBillingMonth() {
@@ -57,11 +73,15 @@ export default function MonthlyBillingPage() {
   const [limit] = useState(50);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
+  const [activeOverride, setActiveOverride] = useState<ActiveOverride | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isUploadingOverride, setIsUploadingOverride] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncWarning, setSyncWarning] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedCustomerId = customerId === 'all' ? undefined : customerId;
 
@@ -87,6 +107,7 @@ export default function MonthlyBillingPage() {
       const response = await api.get<MonthlyBillingResponse>(`/billing/monthly-lines?${params.toString()}`);
       setHeaders(response.headers);
       setRows(response.rows);
+      setActiveOverride(response.activeOverride ?? null);
       setTotal(response.pagination.total);
       setTotalPages(response.pagination.totalPages);
     } catch (err) {
@@ -96,6 +117,49 @@ export default function MonthlyBillingPage() {
       setIsLoading(false);
     }
   }, [billingMonth, limit, page, selectedCustomerId, t]);
+
+  const syncWarningFromJob = useCallback((job: BillingSyncJob) => {
+    if (!job.sourceConflicts || job.sourceConflicts.length === 0) return null;
+
+    const preview = job.sourceConflicts
+      .slice(0, 3)
+      .map((conflict) => `${conflict.projectId}: ${conflict.sourceLabels.join(' / ')}`)
+      .join('; ');
+
+    return `Updated BigQuery data, but ${job.sourceConflictCount ?? job.sourceConflicts.length} overlapping project(s) were found. Invoice execution is blocked until source mappings are resolved. ${preview}`;
+  }, []);
+
+  const pollSyncJob = useCallback((jobId: string) => {
+    const poll = async () => {
+      try {
+        const response = await api.get<{ job: BillingSyncJob }>(`/billing/sync-jobs/${jobId}`);
+        const job = response.job;
+
+        if (job.status === 'QUEUED' || job.status === 'RUNNING') {
+          window.setTimeout(poll, 3000);
+          return;
+        }
+
+        if (job.status === 'SUCCEEDED') {
+          setSyncMessage(t('syncSuccess', { count: job.totalRows }));
+          setSyncWarning(syncWarningFromJob(job));
+          setPage(1);
+          await fetchRows();
+          setIsSyncing(false);
+          return;
+        }
+
+        setError(job.errorMessage || job.errors.join('; ') || t('syncFailed'));
+        setIsSyncing(false);
+      } catch (err) {
+        console.error('Failed to poll BigQuery billing sync:', err);
+        setError(err instanceof Error ? err.message : t('syncFailed'));
+        setIsSyncing(false);
+      }
+    };
+
+    void poll();
+  }, [fetchRows, syncWarningFromJob, t]);
 
   useEffect(() => {
     fetchCustomers();
@@ -150,25 +214,53 @@ export default function MonthlyBillingPage() {
     setIsSyncing(true);
     setError(null);
     setSyncMessage(null);
+    setSyncWarning(null);
     try {
-      const response = await api.post<BillingFetchResponse>('/billing/fetch', {
+      const response = await api.post<{ job: BillingSyncJob }>('/billing/sync-jobs', {
         billingMonth,
+        customerId: selectedCustomerId,
       });
-
-      if (response.errors && response.errors.length > 0) {
-        throw new Error(response.errors.join('; '));
-      }
-
-      setSyncMessage(t('syncSuccess', { count: response.totalRows }));
-      setPage(1);
-      if (page === 1) {
-        await fetchRows();
-      }
+      pollSyncJob(response.job.id);
     } catch (err) {
       console.error('Failed to sync BigQuery billing:', err);
       setError(err instanceof Error ? err.message : t('syncFailed'));
-    } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const handleUploadOverride = async (file: File | null) => {
+    if (!file) return;
+    setIsUploadingOverride(true);
+    setError(null);
+    setSyncMessage(null);
+    setSyncWarning(null);
+    try {
+      const formData = new FormData();
+      formData.set('billingMonth', billingMonth);
+      if (selectedCustomerId) formData.set('customerId', selectedCustomerId);
+      formData.set('file', file);
+
+      const token = getAuthToken();
+      const response = await fetch('/api/billing/monthly-lines/overrides', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: formData,
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.error || 'Failed to upload override');
+      }
+
+      setSyncMessage(`Override uploaded: ${body.activeOverride?.rowCount ?? 0} rows`);
+      setPage(1);
+      await fetchRows();
+    } catch (err) {
+      console.error('Failed to upload monthly billing override:', err);
+      setError(err instanceof Error ? err.message : 'Failed to upload override');
+    } finally {
+      setIsUploadingOverride(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -197,6 +289,25 @@ export default function MonthlyBillingPage() {
             <RotateCcw className="h-4 w-4 mr-2" />
             {tc('refresh')}
           </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx"
+            className="hidden"
+            onChange={(event) => handleUploadOverride(event.target.files?.[0] ?? null)}
+          />
+          <Button
+            variant="outline"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploadingOverride || isLoading}
+          >
+            {isUploadingOverride ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Upload className="h-4 w-4 mr-2" />
+            )}
+            Upload Override
+          </Button>
           <Button onClick={handleExport} disabled={isExporting || total === 0}>
             {isExporting ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -217,6 +328,12 @@ export default function MonthlyBillingPage() {
       {syncMessage && (
         <Alert variant="success" onClose={() => setSyncMessage(null)}>
           {syncMessage}
+        </Alert>
+      )}
+
+      {syncWarning && (
+        <Alert variant="warning" onClose={() => setSyncWarning(null)}>
+          {syncWarning}
         </Alert>
       )}
 
@@ -267,6 +384,11 @@ export default function MonthlyBillingPage() {
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="flex items-center gap-2">
             <Badge variant="secondary">{billingMonth}</Badge>
+            {activeOverride && (
+              <Badge variant="outline" title={`Uploaded ${new Date(activeOverride.uploadedAt).toLocaleString()}`}>
+                Override: {activeOverride.sourceFilename}
+              </Badge>
+            )}
             <span className="text-sm text-muted-foreground">
               {t('rowCount', { count: total })}
             </span>

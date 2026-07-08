@@ -18,21 +18,32 @@ export interface BillingLineItemDTO {
 
   // Account hierarchy (normalized across providers)
   accountId: string; // GCP: billing_account_id, AWS: payer_account_id, OpenAI: organization_id
+  billingAccountName?: string;
   subaccountId?: string; // GCP: project_id, AWS: usage_account_id, OpenAI: project_id
+  projectName?: string;
   resourceId?: string; // GCP: resource.name, AWS: resource_id, OpenAI: null
 
   // Product/service identification
   productId: string; // GCP: service.id, AWS: product_code, OpenAI: model
+  serviceDescription?: string;
   meterId: string; // GCP: sku.id, AWS: usage_type, OpenAI: operation (tokens/images)
+  skuDescription?: string;
 
   // Usage metrics
   usageAmount: Prisma.Decimal;
   usageUnit: string; // GCP: usage.unit, AWS: usage_amount unit, OpenAI: tokens/images
+  pricingUsageAmount?: Prisma.Decimal;
+  pricingUsageUnit?: string;
 
   // Cost data
   cost: Prisma.Decimal; // Actual cost after discounts
   listCost?: Prisma.Decimal; // List/public price before discounts
+  creditAmount?: Prisma.Decimal;
+  costAfterCredit?: Prisma.Decimal;
   currency: string;
+  currencyConversionRate?: Prisma.Decimal;
+  creditBreakdown?: unknown;
+  transactionType?: string;
 
   // Time range
   usageStartTime: Date;

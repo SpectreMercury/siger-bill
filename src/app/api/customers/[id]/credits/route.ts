@@ -86,6 +86,12 @@ export const GET = withPermissionAndScope(
             status: true,
             sourceReference: true,
             description: true,
+            matchSkuId: true,
+            matchSkuGroupId: true,
+            matchProjectId: true,
+            matchSkuGroup: {
+              select: { id: true, code: true, name: true },
+            },
             createdAt: true,
             updatedAt: true,
             _count: {
@@ -109,8 +115,13 @@ export const GET = withPermissionAndScope(
         validTo: credit.validTo.toISOString().split('T')[0],
         allowCarryOver: credit.allowCarryOver,
         status: credit.status,
+        isActive: credit.status === 'ACTIVE',
         sourceReference: credit.sourceReference,
         description: credit.description,
+        matchSkuId: credit.matchSkuId,
+        matchSkuGroupId: credit.matchSkuGroupId,
+        matchSkuGroup: credit.matchSkuGroup,
+        matchProjectId: credit.matchProjectId,
         applicationCount: credit._count.ledgerEntries,
         createdAt: credit.createdAt,
         updatedAt: credit.updatedAt,
@@ -137,10 +148,10 @@ export const GET = withPermissionAndScope(
  * POST /api/customers/:id/credits
  *
  * Create a new credit for this customer.
- * Requires credits:write permission and customer scope.
+ * Requires credits:create permission and customer scope.
  */
 export const POST = withPermissionAndScope(
-  { resource: 'credits', action: 'write' },
+  { resource: 'credits', action: 'create' },
   (_request, routeParams) => routeParams?.params.id ?? null,
   async (request: NextRequest, context): Promise<NextResponse> => {
     try {
@@ -169,6 +180,16 @@ export const POST = withPermissionAndScope(
         return badRequest('validTo must be after validFrom');
       }
 
+      if (data.matchSkuGroupId) {
+        const skuGroup = await prisma.skuGroup.findUnique({
+          where: { id: data.matchSkuGroupId },
+          select: { id: true },
+        });
+        if (!skuGroup) {
+          return notFound('SKU group not found');
+        }
+      }
+
       // Create credit
       const credit = await prisma.credit.create({
         data: {
@@ -184,6 +205,14 @@ export const POST = withPermissionAndScope(
           status: 'ACTIVE',
           sourceReference: data.sourceReference || null,
           description: data.description || null,
+          matchSkuId: data.matchSkuId ?? null,
+          matchSkuGroupId: data.matchSkuGroupId ?? null,
+          matchProjectId: data.matchProjectId ?? null,
+        },
+        include: {
+          matchSkuGroup: {
+            select: { id: true, code: true, name: true },
+          },
         },
       });
 
@@ -197,6 +226,9 @@ export const POST = withPermissionAndScope(
         allowCarryOver: credit.allowCarryOver,
         billingAccountId: credit.billingAccountId,
         sourceReference: credit.sourceReference,
+        matchSkuId: credit.matchSkuId,
+        matchSkuGroupId: credit.matchSkuGroupId,
+        matchProjectId: credit.matchProjectId,
       });
 
       return created({
@@ -211,8 +243,13 @@ export const POST = withPermissionAndScope(
         validTo: credit.validTo.toISOString().split('T')[0],
         allowCarryOver: credit.allowCarryOver,
         status: credit.status,
+        isActive: credit.status === 'ACTIVE',
         sourceReference: credit.sourceReference,
         description: credit.description,
+        matchSkuId: credit.matchSkuId,
+        matchSkuGroupId: credit.matchSkuGroupId,
+        matchSkuGroup: credit.matchSkuGroup,
+        matchProjectId: credit.matchProjectId,
         createdAt: credit.createdAt,
       });
 

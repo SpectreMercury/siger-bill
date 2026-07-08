@@ -26,6 +26,11 @@ const blankStringToNull = (value: unknown) => {
   return value;
 };
 
+const blankOrNullToUndefined = (value: unknown) => {
+  if (value === null) return undefined;
+  return blankStringToUndefined(value);
+};
+
 const optionalText = (max: number) =>
   z.preprocess(blankStringToUndefined, z.string().trim().max(max).optional());
 
@@ -337,19 +342,24 @@ export const updatePricingRuleSchema = z
 // Phase 3.3: Credit Schemas
 // ============================================================================
 
+export const CREDIT_TYPES = [
+  'FEE_UTILIZATION_OFFSET',
+  'DISCOUNT',
+  'SUSTAINED_USAGE_DISCOUNT',
+  'COMMITTED_USAGE_DISCOUNT',
+  'COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE',
+  'PROMOTION',
+] as const;
+
 /**
  * Credit creation schema
  */
 export const createCreditSchema = z.object({
-  types: z.array(z.enum([
-    'DISCOUNT',
-    'SUSTAINED_USAGE_DISCOUNT',
-    'COMMITTED_USAGE_DISCOUNT',
-    'COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE',
-    'PROMOTION',
-    'SUBSCRIPTION_BENEFIT',
-  ])).min(1, 'At least one type is required'),
-  totalAmount: z.number().positive('Total amount must be positive'),
+  types: z.array(z.enum(CREDIT_TYPES)).min(1, 'At least one type is required'),
+  totalAmount: z.preprocess(
+    blankOrNullToUndefined,
+    z.coerce.number().nonnegative('Total amount must be non-negative').optional().default(0)
+  ),
   currency: patterns.currency.default('USD'),
   validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
   validTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
@@ -357,6 +367,9 @@ export const createCreditSchema = z.object({
   billingAccountId: z.string().max(100).optional().nullable(),
   sourceReference: z.string().max(255).optional().nullable(),
   description: z.string().optional().nullable(),
+  matchSkuId: z.string().trim().min(1).max(100).optional().nullable(),
+  matchSkuGroupId: z.string().uuid().optional().nullable(),
+  matchProjectId: z.string().trim().min(1).max(100).optional().nullable(),
 });
 
 /**
@@ -367,6 +380,9 @@ export const updateCreditSchema = z.object({
   validTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
   allowCarryOver: z.boolean().optional(),
   description: z.string().optional().nullable(),
+  matchSkuId: z.string().trim().min(1).max(100).optional().nullable(),
+  matchSkuGroupId: z.string().uuid().optional().nullable(),
+  matchProjectId: z.string().trim().min(1).max(100).optional().nullable(),
 });
 
 // ============================================================================

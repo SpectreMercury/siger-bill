@@ -17,7 +17,9 @@
     "db:seed:mock": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed-mock-data.ts",
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio",
-    "test:customer-validation": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-customer-validation.ts"
+    "test:customer-validation": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-customer-validation.ts",
+    "test:billing-active-source": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-billing-active-source.ts",
+    "test:credit-validation": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-credit-optional-amount.ts"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^8.1.1",

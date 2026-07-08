@@ -704,12 +704,12 @@
     "validTo": "Valid To",
     "status": "Status",
     "types": {
+      "FEE_UTILIZATION_OFFSET": "Fee Utilization Offset",
       "DISCOUNT": "Discount",
       "SUSTAINED_USAGE_DISCOUNT": "Sustained Usage Discount",
       "COMMITTED_USAGE_DISCOUNT": "Committed Usage Discount (CUD)",
       "COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE": "Committed Usage Discount ($ base)",
-      "PROMOTION": "Promotion",
-      "SUBSCRIPTION_BENEFIT": "Subscription Benefit"
+      "PROMOTION": "Promotion"
     },
     "actions": {
       "create": "Add Credit"
@@ -1166,8 +1166,13 @@
     "default": "Default",
     "test": "Test",
     "testBigQuery": "Test BigQuery",
+    "syncBilling": "Sync Billing Data",
     "setDefault": "Set Default",
     "testing": "Testing...",
+    "syncing": "Background sync running...",
+    "syncSuccess": "{month} sync complete. {count} rows written.",
+    "syncFailed": "Failed to sync billing data",
+    "syncConflictWarning": "{count} overlapping project(s) found. Resolve source mappings before executing invoices. {preview}",
     "noConnections": "No GCP connections yet. Click the button below to add your first connection.",
     "actions": {
       "create": "Add Connection"
@@ -1177,6 +1182,12 @@
       "editTitle": "Edit GCP Connection",
       "deleteTitle": "Delete Connection",
       "deleteConfirm": "Are you sure you want to delete this GCP connection? This action cannot be undone."
+    },
+    "syncModal": {
+      "title": "Sync billing data",
+      "billingMonth": "Billing month",
+      "description": "Fetch BigQuery billing export data for {name}. Existing active data for the same source and month will be superseded.",
+      "submit": "Sync"
     },
     "fields": {
       "name": "Connection Name",

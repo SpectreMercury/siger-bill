@@ -23,12 +23,12 @@ import { Can } from '@/components/auth';
 import { Plus, Eye, Check, X } from 'lucide-react';
 
 const CREDIT_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'FEE_UTILIZATION_OFFSET', label: 'Fee Utilization Offset' },
   { value: 'DISCOUNT', label: 'Discount' },
   { value: 'SUSTAINED_USAGE_DISCOUNT', label: 'Sustained Usage Discount' },
   { value: 'COMMITTED_USAGE_DISCOUNT', label: 'Committed Usage Discount' },
   { value: 'COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE', label: 'Committed Usage Discount ($ base)' },
   { value: 'PROMOTION', label: 'Promotion' },
-  { value: 'SUBSCRIPTION_BENEFIT', label: 'Subscription Benefit' },
 ];
 
 interface CreditLedgerEntry {
@@ -140,12 +140,13 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
       setError('At least one type is required');
       return;
     }
+    const amount = formData.totalAmount.trim();
     setIsSaving(true);
     setError(null);
     try {
       await api.post(`/customers/${customerId}/credits`, {
         types: formData.types,
-        totalAmount: parseFloat(formData.totalAmount),
+        ...(amount ? { totalAmount: parseFloat(amount) } : {}),
         description: formData.description || undefined,
         validFrom: formData.validFrom,
         validTo: formData.validTo,
@@ -386,7 +387,7 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
           </div>
 
           <div>
-            <Label htmlFor="totalAmount">Amount *</Label>
+            <Label htmlFor="totalAmount">Amount</Label>
             <Input
               id="totalAmount"
               type="number"
@@ -486,7 +487,7 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
 
           <div className="flex justify-end gap-3 pt-4">
             <Button variant="outline" onClick={() => setShowCreateModal(false)}>Cancel</Button>
-            <Button onClick={handleSubmit} disabled={!formData.totalAmount || isSaving || formData.types.length === 0}>
+            <Button onClick={handleSubmit} disabled={isSaving || formData.types.length === 0}>
               {isSaving ? 'Creating...' : 'Create'}
             </Button>
           </div>

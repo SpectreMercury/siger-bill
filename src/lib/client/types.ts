@@ -133,6 +133,7 @@ export interface Credit {
   validTo: string;
   isActive: boolean;
   matchSkuId?: string | null;
+  matchSkuGroupId?: string | null;
   matchSkuGroup?: { id: string; code: string; name: string } | null;
   matchProjectId?: string | null;
 }

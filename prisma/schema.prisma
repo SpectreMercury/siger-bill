@@ -29,14 +29,16 @@ model User {
   // Relations
   userRoles                    UserRole[]
   userScopes                   UserScope[]
-  auditLogs                    AuditLog[]              @relation("AuditActor")
-  invoiceRuns                  InvoiceRun[]            @relation("InvoiceRunCreator")
-  rawCostIngestionBatches      RawCostIngestionBatch[] @relation("IngestionCreator")
-  billingIngestionBatches      BillingIngestionBatch[] @relation("BillingIngestionCreator") // Phase 5
-  payments                     Payment[]               @relation("PaymentRecorder") // Phase X
-  gcpConnections               GcpConnection[]         @relation("GcpConnectionCreator")
-  projectBillingConfigsCreated ProjectBillingConfig[]  @relation("ProjectBillingConfigCreator")
-  projectBillingConfigsUpdated ProjectBillingConfig[]  @relation("ProjectBillingConfigUpdater")
+  auditLogs                    AuditLog[]               @relation("AuditActor")
+  invoiceRuns                  InvoiceRun[]             @relation("InvoiceRunCreator")
+  rawCostIngestionBatches      RawCostIngestionBatch[]  @relation("IngestionCreator")
+  billingIngestionBatches      BillingIngestionBatch[]  @relation("BillingIngestionCreator") // Phase 5
+  billingSyncJobs              BillingSyncJob[]         @relation("BillingSyncJobCreator")
+  billingMonthlyOverrides      BillingMonthlyOverride[] @relation("BillingMonthlyOverrideUploader")
+  payments                     Payment[]                @relation("PaymentRecorder") // Phase X
+  gcpConnections               GcpConnection[]          @relation("GcpConnectionCreator")
+  projectBillingConfigsCreated ProjectBillingConfig[]   @relation("ProjectBillingConfigCreator")
+  projectBillingConfigsUpdated ProjectBillingConfig[]   @relation("ProjectBillingConfigUpdater")
 
   @@index([email])
   @@index([isActive])
@@ -179,16 +181,19 @@ model Customer {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
-  invoices                 Invoice[]
-  configSnapshots          ConfigSnapshot[]
-  customerProjects         CustomerProject[]
-  pricingLists             PricingList[]
-  credits                  Credit[] // Phase 3.3
-  specialRules             SpecialRule[]             @relation("SpecialRuleCustomer") // Phase 3.5
-  specialRulesTargeted     SpecialRule[]             @relation("SpecialRuleTarget") // Phase 3.5: Rules that move costs TO this customer
+  invoices                    Invoice[]
+  configSnapshots             ConfigSnapshot[]
+  customerProjects            CustomerProject[]
+  pricingLists                PricingList[]
+  credits                     Credit[] // Phase 3.3
+  specialRules                SpecialRule[]                @relation("SpecialRuleCustomer") // Phase 3.5
+  specialRulesTargeted        SpecialRule[]                @relation("SpecialRuleTarget") // Phase 3.5: Rules that move costs TO this customer
+  billingSyncJobs             BillingSyncJob[]
+  billingMonthlyOverrides     BillingMonthlyOverride[]     @relation("BillingMonthlyOverrideCustomer")
+  billingMonthlyOverrideLines BillingMonthlyOverrideLine[] @relation("BillingMonthlyOverrideLineCustomer")
   // Phase 7: Analytics
-  billingMonthlySummaries  BillingMonthlySummary[]
-  billingCustomerSnapshots BillingCustomerSnapshot[]
+  billingMonthlySummaries     BillingMonthlySummary[]
+  billingCustomerSnapshots    BillingCustomerSnapshot[]
 
   @@index([externalId])
   @@index([status])
@@ -421,22 +426,33 @@ model BillingLineItem {
   sourceType BillingSourceType @map("source_type")
 
   // Account hierarchy (provider-agnostic naming)
-  accountId    String  @map("account_id") @db.VarChar(100) // GCP billing account, AWS account ID, OpenAI org
-  subaccountId String? @map("subaccount_id") @db.VarChar(100) // GCP project, AWS linked account
-  resourceId   String? @map("resource_id") @db.VarChar(255) // Resource ARN, instance ID, etc.
+  accountId          String  @map("account_id") @db.VarChar(100) // GCP billing account, AWS account ID, OpenAI org
+  billingAccountName String? @map("billing_account_name") @db.VarChar(255)
+  subaccountId       String? @map("subaccount_id") @db.VarChar(100) // GCP project, AWS linked account
+  projectName        String? @map("project_name") @db.VarChar(255)
+  resourceId         String? @map("resource_id") @db.VarChar(255) // Resource ARN, instance ID, etc.
 
   // Product/service identification
-  productId String @map("product_id") @db.VarChar(100) // GCP service, AWS service, OpenAI model
-  meterId   String @map("meter_id") @db.VarChar(100) // GCP SKU, AWS usage type, OpenAI endpoint
+  productId          String  @map("product_id") @db.VarChar(100) // GCP service, AWS service, OpenAI model
+  serviceDescription String? @map("service_description") @db.VarChar(255)
+  meterId            String  @map("meter_id") @db.VarChar(100) // GCP SKU, AWS usage type, OpenAI endpoint
+  skuDescription     String? @map("sku_description") @db.VarChar(500)
 
   // Usage metrics
-  usageAmount Decimal @map("usage_amount") @db.Decimal(30, 10)
-  usageUnit   String  @map("usage_unit") @db.VarChar(50) // hours, GB, tokens, requests
+  usageAmount        Decimal  @map("usage_amount") @db.Decimal(30, 10)
+  usageUnit          String   @map("usage_unit") @db.VarChar(50) // hours, GB, tokens, requests
+  pricingUsageAmount Decimal? @map("pricing_usage_amount") @db.Decimal(30, 10)
+  pricingUsageUnit   String?  @map("pricing_usage_unit") @db.VarChar(50)
 
   // Cost data
-  cost     Decimal  @db.Decimal(18, 10) // Actual cost after provider discounts
-  listCost Decimal? @map("list_cost") @db.Decimal(18, 10) // List/on-demand price
-  currency String   @db.VarChar(3)
+  cost                   Decimal  @db.Decimal(18, 10) // Reseller/provider cost before credit rows are applied
+  listCost               Decimal? @map("list_cost") @db.Decimal(18, 10) // List/on-demand price
+  creditAmount           Decimal  @default(0) @map("credit_amount") @db.Decimal(18, 10)
+  costAfterCredit        Decimal? @map("cost_after_credit") @db.Decimal(18, 10)
+  currency               String   @db.VarChar(3)
+  currencyConversionRate Decimal? @map("currency_conversion_rate") @db.Decimal(18, 10)
+  creditBreakdown        Json?    @map("credit_breakdown") @db.JsonB
+  transactionType        String?  @map("transaction_type") @db.VarChar(100)
 
   // Time range
   usageStartTime DateTime @map("usage_start_time") @db.Timestamptz
@@ -475,18 +491,131 @@ model BillingIngestionBatch {
   // Source metadata for reproducibility
   sourceMetadata Json? @map("source_metadata") @db.JsonB // Dataset, bucket, query hash, API params
 
+  isActive     Boolean   @default(true) @map("is_active")
+  supersededAt DateTime? @map("superseded_at") @db.Timestamptz
+
   createdBy String   @map("created_by") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   // Relations
-  creator   User              @relation("BillingIngestionCreator", fields: [createdBy], references: [id], onDelete: Restrict)
-  lineItems BillingLineItem[]
+  creator         User                    @relation("BillingIngestionCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  lineItems       BillingLineItem[]
+  monthlyOverride BillingMonthlyOverride?
 
   @@unique([provider, checksum, invoiceMonth, sourceType]) // Idempotency constraint
   @@index([provider, invoiceMonth])
+  @@index([provider, sourceType, invoiceMonth, isActive])
   @@index([createdBy])
   @@index([createdAt])
   @@map("billing_ingestion_batches")
+}
+
+/// Background BigQuery billing sync job.
+/// Keeps long-running ingest work off the request/response lifecycle.
+enum BillingSyncJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+
+  @@map("billing_sync_job_status")
+}
+
+model BillingSyncJob {
+  id                  String               @id @default(uuid()) @db.Uuid
+  billingMonth        String               @map("billing_month") @db.VarChar(7)
+  connectionId        String?              @map("connection_id") @db.Uuid
+  customerId          String?              @map("customer_id") @db.Uuid
+  status              BillingSyncJobStatus @default(QUEUED)
+  totalRows           Int                  @default(0) @map("total_rows")
+  batches             Json?                @db.JsonB
+  sourceConflictCount Int                  @default(0) @map("source_conflict_count")
+  sourceConflicts     Json?                @map("source_conflicts") @db.JsonB
+  errors              String[]             @default([])
+  errorMessage        String?              @map("error_message") @db.Text
+  createdBy           String               @map("created_by") @db.Uuid
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  startedAt           DateTime?            @map("started_at") @db.Timestamptz
+  finishedAt          DateTime?            @map("finished_at") @db.Timestamptz
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+
+  creator    User           @relation("BillingSyncJobCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  connection GcpConnection?  @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  customer   Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([billingMonth, status])
+  @@index([connectionId, billingMonth])
+  @@index([customerId, billingMonth])
+  @@index([createdBy])
+  @@index([createdAt])
+  @@map("billing_sync_jobs")
+}
+
+/// Uploaded monthly billing workbook override.
+/// Keeps BigQuery-imported data immutable while allowing an uploaded Excel
+/// version to become the active source for a month/customer scope.
+model BillingMonthlyOverride {
+  id                      String    @id @default(uuid()) @db.Uuid
+  billingMonth            String    @map("billing_month") @db.VarChar(7)
+  customerId              String?   @map("customer_id") @db.Uuid
+  billingIngestionBatchId String    @unique @map("billing_ingestion_batch_id") @db.Uuid
+  sourceFilename          String    @map("source_filename") @db.VarChar(255)
+  sourceFileHash          String    @map("source_file_hash") @db.VarChar(64)
+  rowCount                Int       @map("row_count")
+  isActive                Boolean   @default(true) @map("is_active")
+  uploadedBy              String    @map("uploaded_by") @db.Uuid
+  uploadedAt              DateTime  @default(now()) @map("uploaded_at") @db.Timestamptz
+  deactivatedAt           DateTime? @map("deactivated_at") @db.Timestamptz
+
+  customer              Customer?                    @relation("BillingMonthlyOverrideCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  uploader              User                         @relation("BillingMonthlyOverrideUploader", fields: [uploadedBy], references: [id], onDelete: Restrict)
+  billingIngestionBatch BillingIngestionBatch        @relation(fields: [billingIngestionBatchId], references: [id], onDelete: Restrict)
+  lines                 BillingMonthlyOverrideLine[]
+
+  @@index([billingMonth, customerId, isActive])
+  @@index([uploadedBy])
+  @@map("billing_monthly_overrides")
+}
+
+/// Parsed line from an uploaded monthly billing workbook.
+model BillingMonthlyOverrideLine {
+  id                     String   @id @default(uuid()) @db.Uuid
+  overrideId             String   @map("override_id") @db.Uuid
+  rowNumber              Int      @map("row_number")
+  customerId             String?  @map("customer_id") @db.Uuid
+  companyName            String?  @map("company_name") @db.VarChar(255)
+  billingAccountId       String   @map("billing_account_id") @db.VarChar(100)
+  billingAccountName     String?  @map("billing_account_name") @db.VarChar(255)
+  projectName            String?  @map("project_name") @db.VarChar(255)
+  projectId              String?  @map("project_id") @db.VarChar(100)
+  serviceDescription     String?  @map("service_description") @db.VarChar(255)
+  serviceId              String   @map("service_id") @db.VarChar(100)
+  skuDescription         String?  @map("sku_description") @db.VarChar(500)
+  skuId                  String   @map("sku_id") @db.VarChar(100)
+  usageStartTime         DateTime @map("usage_start_time") @db.Timestamptz
+  usageEndTime           DateTime @map("usage_end_time") @db.Timestamptz
+  usageAmount            Decimal  @map("usage_amount") @db.Decimal(30, 10)
+  usageUnit              String   @map("usage_unit") @db.VarChar(50)
+  currency               String   @db.VarChar(3)
+  listCost               Decimal? @map("list_cost") @db.Decimal(18, 10)
+  resellerCost           Decimal  @map("reseller_cost") @db.Decimal(18, 10)
+  creditAmount           Decimal  @default(0) @map("credit_amount") @db.Decimal(18, 10)
+  costAfterCredit        Decimal? @map("cost_after_credit") @db.Decimal(18, 10)
+  discountPrice          String?  @map("discount_price") @db.VarChar(100)
+  finalAmount            Decimal? @map("final_amount") @db.Decimal(18, 10)
+  cnyAmount              Decimal? @map("cny_amount") @db.Decimal(18, 10)
+  transactionType        String?  @map("transaction_type") @db.VarChar(100)
+  currencyConversionRate Decimal? @map("currency_conversion_rate") @db.Decimal(18, 10)
+  rowData                Json     @map("row_data") @db.JsonB
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  override BillingMonthlyOverride @relation(fields: [overrideId], references: [id], onDelete: Cascade)
+  customer Customer?              @relation("BillingMonthlyOverrideLineCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([overrideId])
+  @@index([customerId])
+  @@index([projectId])
+  @@map("billing_monthly_override_lines")
 }
 
 // =============================================================================
@@ -812,7 +941,7 @@ model SkuGroup {
   skuGroupMappings  SkuGroupMapping[]
   pricingRuleGroups PricingRuleSkuGroup[]
   specialRules      SpecialRule[] // Phase 3.5
-  credits           Credit[]      @relation("CreditMatchSkuGroup")
+  credits           Credit[]              @relation("CreditMatchSkuGroup")
 
   @@map("sku_groups")
 }
@@ -923,12 +1052,12 @@ model PricingRuleSkuGroup {
 
 /// Credit type enumeration — mirrors GCP's credit categories
 enum CreditType {
-  DISCOUNT                              // Generic discount
-  SUSTAINED_USAGE_DISCOUNT              // GCP automatic sustained-use discount
-  COMMITTED_USAGE_DISCOUNT              // GCP CUD (committed usage discount)
-  COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE  // GCP $-based CUD
-  PROMOTION                             // Marketing / promotional credits
-  SUBSCRIPTION_BENEFIT                  // Subscription-bundled benefit
+  FEE_UTILIZATION_OFFSET // Fee utilization offset
+  DISCOUNT // Generic discount
+  SUSTAINED_USAGE_DISCOUNT // GCP automatic sustained-use discount
+  COMMITTED_USAGE_DISCOUNT // GCP CUD (committed usage discount)
+  COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE // GCP $-based CUD
+  PROMOTION // Marketing / promotional credits
 
   @@map("credit_type")
 }
@@ -967,7 +1096,7 @@ model Credit {
   // Optional scope filters (all nullable, combined with AND).
   // All null = unrestricted, applies to the customer's whole invoice.
   matchSkuId      String? @map("match_sku_id") @db.VarChar(100) // Raw GCP SKU id
-  matchSkuGroupId String? @map("match_sku_group_id") @db.Uuid   // FK to sku_groups
+  matchSkuGroupId String? @map("match_sku_group_id") @db.Uuid // FK to sku_groups
   matchProjectId  String? @map("match_project_id") @db.VarChar(100) // Raw GCP project id
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -1268,6 +1397,7 @@ model GcpConnection {
 
   createdBy User?      @relation("GcpConnectionCreator", fields: [createdById], references: [id], onDelete: SetNull)
   customers Customer[] @relation("CustomerGcpConnection")
+  billingSyncJobs BillingSyncJob[]
 
   @@index([group])
   @@index([isDefault])

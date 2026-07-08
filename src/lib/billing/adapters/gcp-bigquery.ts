@@ -75,6 +75,7 @@ interface GcpBillingExportRow {
     month: string;
   };
   cost_type: string;
+  transaction_type?: string | null;
   adjustment_info: {
     id: string;
     description: string;
@@ -203,6 +204,7 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
         query,
         queryParams,
         source: `${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}`,
+        sourceKey: this.buildSourceKey(accountIds || this.config.billingAccountIds),
         jobProjectId: this.config.jobProjectId || this.config.projectId,
         dataRange: {
           start: `${month}-01`,
@@ -279,6 +281,7 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
         credits,
         invoice,
         cost_type,
+        transaction_type,
         adjustment_info
       FROM \`${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}\`
       WHERE invoice.month = @invoiceMonth
@@ -287,6 +290,14 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
     `;
 
     return { query, params: queryParams };
+  }
+
+  private buildSourceKey(billingAccountIds?: string[]): string {
+    const source = `${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}`;
+    const accountScope = billingAccountIds && billingAccountIds.length > 0
+      ? [...billingAccountIds].sort().join(',')
+      : '*';
+    return `${source}|billingAccounts=${accountScope}`;
   }
 
   /**
@@ -312,6 +323,13 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
       if (row.credits) {
         creditsAmount = row.credits.reduce((sum, credit) => sum + credit.amount, 0);
       }
+      const creditBreakdown = row.credits?.map((credit) => ({
+        id: credit.id,
+        name: credit.name,
+        fullName: credit.full_name,
+        type: credit.type,
+        amount: credit.amount,
+      }));
 
       return {
         provider: BillingProvider.GCP,
@@ -319,25 +337,38 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
 
         // Account hierarchy
         accountId: row.billing_account_id,
+        projectName: row.project?.name || undefined,
         subaccountId: row.project?.id || undefined,
         resourceId: row.resource?.name || undefined,
 
         // Product identification
         productId: row.service.id,
+        serviceDescription: row.service.description,
         meterId: row.sku.id,
+        skuDescription: row.sku.description,
 
         // Usage metrics
         usageAmount: new Prisma.Decimal(row.usage.amount || 0),
         usageUnit: row.usage.unit || 'unknown',
+        pricingUsageAmount: new Prisma.Decimal(row.usage.amount_in_pricing_units || 0),
+        pricingUsageUnit: row.usage.pricing_unit || undefined,
 
-        // Cost data (cost already includes credits in GCP export)
+        // Cost data. BigQuery credit rows are negative offsets, so net cost is
+        // cost + creditAmount.
         cost: new Prisma.Decimal(row.cost),
         listCost: row.cost_at_list != null
           ? new Prisma.Decimal(row.cost_at_list)
           : creditsAmount !== 0
             ? new Prisma.Decimal(row.cost - creditsAmount)
             : undefined,
+        creditAmount: new Prisma.Decimal(creditsAmount),
+        costAfterCredit: new Prisma.Decimal(row.cost).add(creditsAmount),
         currency: row.currency,
+        currencyConversionRate: row.currency_conversion_rate != null
+          ? new Prisma.Decimal(row.currency_conversion_rate)
+          : undefined,
+        creditBreakdown,
+        transactionType: row.transaction_type || row.cost_type || undefined,
 
         // Time range
         usageStartTime: new Date(row.usage_start_time.value),

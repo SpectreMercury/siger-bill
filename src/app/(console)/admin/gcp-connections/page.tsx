@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { api } from '@/lib/client/api';
 import { Alert } from '@/components/ui';
@@ -21,6 +21,7 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
+  CloudDownload,
   KeyRound,
   Server,
   FlaskConical,
@@ -57,6 +58,23 @@ type TestState =
   | { status: 'loading' }
   | { status: 'success'; message: string }
   | { status: 'error'; error: string };
+
+type BillingSyncJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+
+interface BillingSyncJob {
+  id: string;
+  billingMonth: string;
+  connectionId: string | null;
+  status: BillingSyncJobStatus;
+  totalRows: number;
+  errors: string[];
+  errorMessage: string | null;
+  sourceConflictCount?: number;
+  sourceConflicts?: Array<{
+    projectId: string;
+    sourceLabels: string[];
+  }>;
+}
 
 type GcpAuthType = 'SERVICE_ACCOUNT' | 'API_KEY' | 'APPLICATION_DEFAULT';
 
@@ -99,6 +117,12 @@ const DEFAULT_FORM: FormData = {
   isActive: true,
 };
 
+function defaultBillingMonth() {
+  const date = new Date();
+  date.setMonth(date.getMonth() - 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -123,6 +147,11 @@ export default function GcpConnectionsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   const [testStates, setTestStates] = useState<Record<string, TestState>>({});
+  const [syncStates, setSyncStates] = useState<Record<string, TestState>>({});
+  const [syncTarget, setSyncTarget] = useState<GcpConnection | null>(null);
+  const [syncBillingMonth, setSyncBillingMonth] = useState(defaultBillingMonth());
+  const pollingJobsRef = useRef<Set<string>>(new Set());
+  const syncJobKeysRef = useRef<Record<string, string>>({});
 
   // ---------------------------------------------------------------------------
   // Load
@@ -380,6 +409,128 @@ export default function GcpConnectionsPage() {
     }
   };
 
+  const handleOpenSync = (conn: GcpConnection) => {
+    setSyncTarget(conn);
+    setSyncBillingMonth(defaultBillingMonth());
+  };
+
+  const syncKey = (connectionId: string) => `${connectionId}:sync`;
+
+  const syncMessageFromJob = useCallback((job: BillingSyncJob) => {
+    const conflictCount = job.sourceConflictCount ?? job.sourceConflicts?.length ?? 0;
+    const conflictPreview = conflictCount > 0 && job.sourceConflicts
+      ? ` ${t('syncConflictWarning', {
+          count: conflictCount,
+          preview: job.sourceConflicts
+            .slice(0, 3)
+            .map((conflict) => `${conflict.projectId}: ${conflict.sourceLabels.join(' / ')}`)
+            .join('; '),
+        })}`
+      : '';
+
+    return `${t('syncSuccess', { month: job.billingMonth, count: job.totalRows })}${conflictPreview}`;
+  }, [t]);
+
+  const applySyncJobState = useCallback((job: BillingSyncJob) => {
+    if (!job.connectionId) return;
+
+    const key = syncKey(job.connectionId);
+    syncJobKeysRef.current[job.id] = key;
+
+    if (job.status === 'QUEUED' || job.status === 'RUNNING') {
+      setSyncStates((prev) => ({ ...prev, [key]: { status: 'loading' } }));
+      return;
+    }
+
+    if (job.status === 'SUCCEEDED') {
+      setSyncStates((prev) => ({
+        ...prev,
+        [key]: { status: 'success', message: syncMessageFromJob(job) },
+      }));
+      return;
+    }
+
+    setSyncStates((prev) => ({
+      ...prev,
+      [key]: {
+        status: 'error',
+        error: job.errorMessage || job.errors.join('; ') || t('syncFailed'),
+      },
+    }));
+  }, [syncMessageFromJob, t]);
+
+  const pollSyncJob = useCallback((jobId: string) => {
+    if (pollingJobsRef.current.has(jobId)) return;
+    pollingJobsRef.current.add(jobId);
+
+    const poll = async () => {
+      try {
+        const res = await api.get<{ job: BillingSyncJob }>(`/billing/sync-jobs/${jobId}`);
+        applySyncJobState(res.job);
+
+        if (res.job.status === 'QUEUED' || res.job.status === 'RUNNING') {
+          window.setTimeout(poll, 3000);
+          return;
+        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : t('syncFailed');
+        setSyncStates((prev) => {
+          const key = syncJobKeysRef.current[jobId];
+          if (!key) return prev;
+          return { ...prev, [key]: { status: 'error', error: message } };
+        });
+      } finally {
+        pollingJobsRef.current.delete(jobId);
+      }
+    };
+
+    void poll();
+  }, [applySyncJobState, t]);
+
+  const fetchRecentSyncJobs = useCallback(async () => {
+    try {
+      const res = await api.get<{ data: BillingSyncJob[] }>('/billing/sync-jobs?limit=50');
+      for (const job of res.data) {
+        if (!job.connectionId) continue;
+        applySyncJobState(job);
+        if (job.status === 'QUEUED' || job.status === 'RUNNING') {
+          pollSyncJob(job.id);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load billing sync jobs:', err);
+    }
+  }, [applySyncJobState, pollSyncJob]);
+
+  useEffect(() => {
+    fetchRecentSyncJobs();
+  }, [fetchRecentSyncJobs]);
+
+  const handleSyncBilling = async () => {
+    if (!syncTarget) return;
+
+    const key = syncKey(syncTarget.id);
+    setSyncStates((prev) => ({ ...prev, [key]: { status: 'loading' } }));
+    setSyncTarget(null);
+
+    try {
+      const res = await api.post<{ job: BillingSyncJob }>('/billing/sync-jobs', {
+        billingMonth: syncBillingMonth,
+        connectionId: syncTarget.id,
+      });
+      applySyncJobState(res.job);
+      pollSyncJob(res.job.id);
+    } catch (err: unknown) {
+      setSyncStates((prev) => ({
+        ...prev,
+        [key]: {
+          status: 'error',
+          error: err instanceof Error ? err.message : t('syncFailed'),
+        },
+      }));
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // Render helpers
   // ---------------------------------------------------------------------------
@@ -404,12 +555,11 @@ export default function GcpConnectionsPage() {
     );
   };
 
-  const renderTestResult = (id: string) => {
-    const state = testStates[id];
+  const renderOperationResult = (state: TestState | undefined, loadingLabel: string) => {
     if (!state || state.status === 'idle') return null;
     if (state.status === 'loading') return (
       <div className="flex items-center gap-1 text-xs text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" /> {t('testing')}
+        <Loader2 className="h-3 w-3 animate-spin" /> {loadingLabel}
       </div>
     );
     if (state.status === 'success') return (
@@ -424,6 +574,10 @@ export default function GcpConnectionsPage() {
       </div>
     );
   };
+
+  const renderTestResult = (id: string) => renderOperationResult(testStates[id], t('testing'));
+
+  const renderSyncResult = (id: string) => renderOperationResult(syncStates[id], t('syncing'));
 
   const renderConnectionCard = (conn: GcpConnection) => (
     <div key={conn.id} className="border rounded-lg p-4 bg-card space-y-3">
@@ -485,6 +639,21 @@ export default function GcpConnectionsPage() {
               {t('testBigQuery')}
             </Button>
           )}
+          {conn.billingProjectId && conn.billingDatasetId && conn.billingTableName && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleOpenSync(conn)}
+              disabled={syncStates[`${conn.id}:sync`]?.status === 'loading'}
+            >
+              {syncStates[`${conn.id}:sync`]?.status === 'loading' ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              ) : (
+                <CloudDownload className="h-3 w-3 mr-1" />
+              )}
+              {t('syncBilling')}
+            </Button>
+          )}
           {!conn.isDefault && (
             <Button variant="ghost" size="sm" onClick={() => handleSetDefault(conn)}>
               <StarOff className="h-3 w-3 mr-1" />
@@ -507,6 +676,7 @@ export default function GcpConnectionsPage() {
       </div>
       {renderTestResult(`${conn.id}:gcp`)}
       {renderTestResult(`${conn.id}:bigquery`)}
+      {renderSyncResult(`${conn.id}:sync`)}
     </div>
   );
 
@@ -576,6 +746,51 @@ export default function GcpConnectionsPage() {
           )}
         </Card>
       ))}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Billing Sync Modal */}
+      {/* ------------------------------------------------------------------ */}
+      <Modal
+        isOpen={!!syncTarget}
+        onClose={() => setSyncTarget(null)}
+        title={t('syncModal.title')}
+        size="sm"
+      >
+        <form
+          onSubmit={(e) => { e.preventDefault(); handleSyncBilling(); }}
+          className="space-y-4"
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="sync-billing-month">{t('syncModal.billingMonth')}</Label>
+            <Input
+              id="sync-billing-month"
+              type="month"
+              value={syncBillingMonth}
+              onChange={(event) => setSyncBillingMonth(event.target.value)}
+              required
+            />
+            <p className="text-xs text-muted-foreground">
+              {t('syncModal.description', { name: syncTarget?.name ?? '' })}
+            </p>
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button type="button" variant="outline" onClick={() => setSyncTarget(null)}>
+              {tc('cancel')}
+            </Button>
+            <Button
+              type="submit"
+              disabled={!syncBillingMonth || (syncTarget ? syncStates[`${syncTarget.id}:sync`]?.status === 'loading' : false)}
+            >
+              {syncTarget && syncStates[`${syncTarget.id}:sync`]?.status === 'loading' ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <CloudDownload className="h-4 w-4 mr-2" />
+              )}
+              {t('syncModal.submit')}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* ------------------------------------------------------------------ */}
       {/* Create / Edit Modal */}

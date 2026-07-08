@@ -704,12 +704,12 @@
     "validTo": "失效日期",
     "status": "状态",
     "types": {
+      "FEE_UTILIZATION_OFFSET": "费用使用抵扣",
       "DISCOUNT": "折扣",
       "SUSTAINED_USAGE_DISCOUNT": "持续使用折扣",
       "COMMITTED_USAGE_DISCOUNT": "承诺使用折扣 (CUD)",
       "COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE": "承诺使用折扣 ($ 基)",
-      "PROMOTION": "促销",
-      "SUBSCRIPTION_BENEFIT": "订阅权益"
+      "PROMOTION": "促销"
     },
     "actions": {
       "create": "添加额度"
@@ -1166,8 +1166,13 @@
     "default": "默认",
     "test": "测试",
     "testBigQuery": "测试 BigQuery",
+    "syncBilling": "同步账单数据",
     "setDefault": "设为默认",
     "testing": "测试中...",
+    "syncing": "后台同步中...",
+    "syncSuccess": "{month} 同步完成，共写入 {count} 行。",
+    "syncFailed": "同步账单数据失败",
+    "syncConflictWarning": "发现 {count} 个项目存在来源重叠。执行发票前请先处理来源映射。{preview}",
     "noConnections": "暂无 GCP 连接，点击下方按钮添加第一个连接",
     "actions": {
       "create": "添加连接"
@@ -1177,6 +1182,12 @@
       "editTitle": "编辑 GCP 连接",
       "deleteTitle": "删除连接",
       "deleteConfirm": "确定要删除此 GCP 连接吗？此操作无法撤销。"
+    },
+    "syncModal": {
+      "title": "同步账单数据",
+      "billingMonth": "账单月份",
+      "description": "从 {name} 拉取 BigQuery 账单导出数据；同一来源、同一月份的旧 active 数据会被新批次覆盖。",
+      "submit": "同步"
     },
     "fields": {
       "name": "连接名称",

@@ -12,6 +12,7 @@ import { prisma } from '@/lib/db';
 import { withPermission } from '@/lib/middleware';
 import { logCreate } from '@/lib/audit';
 import { CreditType, CreditStatus, Prisma } from '@prisma/client';
+import { CREDIT_TYPES, createCreditSchema as baseCreateCreditSchema } from '@/lib/utils/validation';
 import {
   success,
   created,
@@ -21,30 +22,8 @@ import {
 } from '@/lib/utils';
 import { z } from 'zod';
 
-const CREDIT_TYPES = [
-  'DISCOUNT',
-  'SUSTAINED_USAGE_DISCOUNT',
-  'COMMITTED_USAGE_DISCOUNT',
-  'COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE',
-  'PROMOTION',
-  'SUBSCRIPTION_BENEFIT',
-] as const;
-
-const createCreditSchema = z.object({
+const createCreditSchema = baseCreateCreditSchema.extend({
   customerId: z.string().uuid(),
-  types: z.array(z.enum(CREDIT_TYPES)).min(1, 'At least one type is required'),
-  totalAmount: z.number().positive(),
-  description: z.string().optional(),
-  validFrom: z.string(), // Date string YYYY-MM-DD
-  validTo: z.string(), // Date string YYYY-MM-DD
-  billingAccountId: z.string().optional(),
-  currency: z.string().length(3).optional().default('USD'),
-  allowCarryOver: z.boolean().optional().default(false),
-  sourceReference: z.string().optional(),
-  // Optional scope filters (all null = unrestricted)
-  matchSkuId: z.string().trim().min(1).max(100).optional().nullable(),
-  matchSkuGroupId: z.string().uuid().optional().nullable(),
-  matchProjectId: z.string().trim().min(1).max(100).optional().nullable(),
 });
 
 /**
@@ -53,7 +32,7 @@ const createCreditSchema = z.object({
  * List all credits with pagination and filters.
  */
 export const GET = withPermission(
-  { resource: 'customers', action: 'read' },
+  { resource: 'credits', action: 'read' },
   async (request: NextRequest, context): Promise<NextResponse> => {
     try {
       const { searchParams } = new URL(request.url);
@@ -84,7 +63,7 @@ export const GET = withPermission(
           where.types = { hasSome: requested as CreditType[] };
         }
       }
-      if (status && ['ACTIVE', 'EXHAUSTED', 'EXPIRED', 'CANCELLED'].includes(status)) {
+      if (status && ['ACTIVE', 'EXPIRED', 'DEPLETED'].includes(status)) {
         where.status = status as CreditStatus;
       }
 
@@ -152,7 +131,7 @@ export const GET = withPermission(
  * Create a new credit.
  */
 export const POST = withPermission(
-  { resource: 'customers', action: 'update' },
+  { resource: 'credits', action: 'create' },
   async (request: NextRequest, context): Promise<NextResponse> => {
     try {
       const body = await request.json();
