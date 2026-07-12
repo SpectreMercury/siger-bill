@@ -113,6 +113,29 @@ async function exchangeApplicationDefaultToken(cacheKey: string): Promise<string
   }
 }
 
+function parseEnvServiceAccount(raw: string): ServiceAccountCreds | null {
+  for (const candidate of [Buffer.from(raw, 'base64').toString('utf-8'), raw]) {
+    try {
+      const parsed = JSON.parse(candidate) as ServiceAccountCreds;
+      if (parsed.client_email && parsed.private_key) return parsed;
+    } catch {
+      // Try the next supported encoding.
+    }
+  }
+  return null;
+}
+
+async function getEnvServiceAccountHeaders(): Promise<HeadersInit | null> {
+  const raw = process.env.GCP_SERVICE_ACCOUNT_JSON;
+  if (!raw) return null;
+
+  const credentials = parseEnvServiceAccount(raw);
+  if (!credentials) return null;
+
+  const token = await exchangeServiceAccountToken(credentials, 'env_sa');
+  return token ? { Authorization: `Bearer ${token}`, Accept: 'application/json' } : null;
+}
+
 // ---------------------------------------------------------------------------
 // Public: get headers from a DB connection
 // ---------------------------------------------------------------------------
@@ -152,6 +175,8 @@ export async function gcpFetchHeaders(connectionId?: string): Promise<HeadersIni
       if (creds.key) return { 'X-Goog-Api-Key': creds.key, Accept: 'application/json' };
     }
     if (conn.authType === 'APPLICATION_DEFAULT') {
+      const envServiceAccountHeaders = await getEnvServiceAccountHeaders();
+      if (envServiceAccountHeaders) return envServiceAccountHeaders;
       const token = await exchangeApplicationDefaultToken(conn.id);
       if (token) return { Authorization: `Bearer ${token}`, Accept: 'application/json' };
     }
@@ -161,24 +186,8 @@ export async function gcpFetchHeaders(connectionId?: string): Promise<HeadersIni
   const manualToken = process.env.GCP_ACCESS_TOKEN;
   if (manualToken) return { Authorization: `Bearer ${manualToken}`, Accept: 'application/json' };
 
-  const saJson = process.env.GCP_SERVICE_ACCOUNT_JSON;
-  if (saJson) {
-    try {
-      const parsed: ServiceAccountCreds = JSON.parse(
-        Buffer.from(saJson, 'base64').toString('utf-8')
-      );
-      const token = await exchangeServiceAccountToken(parsed, 'env_sa');
-      if (token) return { Authorization: `Bearer ${token}`, Accept: 'application/json' };
-    } catch {
-      try {
-        const parsed: ServiceAccountCreds = JSON.parse(saJson);
-        const token = await exchangeServiceAccountToken(parsed, 'env_sa');
-        if (token) return { Authorization: `Bearer ${token}`, Accept: 'application/json' };
-      } catch {
-        /* ignore */
-      }
-    }
-  }
+  const envServiceAccountHeaders = await getEnvServiceAccountHeaders();
+  if (envServiceAccountHeaders) return envServiceAccountHeaders;
 
   return null;
 }
