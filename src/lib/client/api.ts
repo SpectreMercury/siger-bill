@@ -56,6 +56,42 @@ export function formatApiError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+async function parseApiResponseBody(response: Response): Promise<unknown> {
+  if (response.status === 204 || response.status === 205) {
+    return null;
+  }
+
+  const body = await response.text();
+  if (!body.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    const contentType = response.headers.get('content-type') || 'unknown';
+    if (response.ok) {
+      throw new ApiError(
+        'Server returned an invalid response',
+        'INVALID_RESPONSE',
+        response.status,
+        { contentType }
+      );
+    }
+    return {
+      error: response.statusText || 'Request failed',
+      code: 'NON_JSON_RESPONSE',
+      details: { contentType },
+    };
+  }
+}
+
 /**
  * Get stored auth token
  */
@@ -121,14 +157,18 @@ export async function apiFetch<T = unknown>(
     throw new ApiError('Authentication required', 'AUTH_REQUIRED', 401);
   }
 
-  const data = await response.json();
+  const data = await parseApiResponseBody(response);
 
   if (!response.ok) {
+    const payload = asRecord(data);
+    const details = asRecord(payload?.details);
     throw new ApiError(
-      data.error || 'Request failed',
-      data.code || 'UNKNOWN_ERROR',
+      typeof payload?.error === 'string'
+        ? payload.error
+        : response.statusText || 'Request failed',
+      typeof payload?.code === 'string' ? payload.code : 'UNKNOWN_ERROR',
       response.status,
-      data.details
+      details ?? undefined
     );
   }
 

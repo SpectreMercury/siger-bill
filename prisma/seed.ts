@@ -29,6 +29,61 @@ const prisma = new PrismaClient({ adapter });
 // ============================================================================
 
 const SALT_ROUNDS = 12;
+const SEED_RETRY_ATTEMPTS = 4;
+const SEED_RETRY_DELAY_MS = 250;
+
+function getErrorCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
+}
+
+function getErrorMessages(error: unknown, seen = new Set<unknown>()): string[] {
+  if (!error || seen.has(error)) return [];
+  seen.add(error);
+
+  const messages = [error instanceof Error ? error.message : String(error)];
+  if (typeof error === 'object' && 'cause' in error) {
+    messages.push(...getErrorMessages((error as { cause?: unknown }).cause, seen));
+  }
+  return messages;
+}
+
+function isTransientSeedError(error: unknown): boolean {
+  const code = getErrorCode(error);
+  if (code && ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'P1001', 'P1017'].includes(code)) {
+    return true;
+  }
+
+  const message = getErrorMessages(error).join('\n');
+  return [
+    'Client has encountered a connection error and is not queryable',
+    'Client network socket disconnected before secure TLS connection was established',
+    'Connection terminated due to connection timeout',
+    'Connection terminated unexpectedly',
+    'terminating connection due to administrator command',
+  ].some((snippet) => message.includes(snippet));
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTransientSeedRetry<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; attempt <= SEED_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt < SEED_RETRY_ATTEMPTS && isTransientSeedError(error)) {
+        await wait(SEED_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return operation();
+}
 
 // Default super admin credentials
 const SUPER_ADMIN = {
@@ -192,11 +247,11 @@ async function seedRoles() {
   const createdRoles: Record<string, string> = {};
 
   for (const role of ROLES) {
-    const created = await prisma.role.upsert({
+    const created = await withTransientSeedRetry(() => prisma.role.upsert({
       where: { name: role.name },
       update: { description: role.description },
       create: role,
-    });
+    }));
     createdRoles[role.name] = created.id;
     console.log(`  ✓ Role: ${role.name}`);
   }
@@ -211,7 +266,7 @@ async function seedPermissions() {
   const createdPermissions: Record<string, string> = {};
 
   for (const perm of permissions) {
-    const created = await prisma.permission.upsert({
+    const created = await withTransientSeedRetry(() => prisma.permission.upsert({
       where: {
         resource_action: {
           resource: perm.resource,
@@ -220,7 +275,7 @@ async function seedPermissions() {
       },
       update: { description: perm.description },
       create: perm,
-    });
+    }));
     createdPermissions[`${perm.resource}:${perm.action}`] = created.id;
   }
 
@@ -239,7 +294,7 @@ async function seedRolePermissions(
   const superAdminRoleId = roles['super_admin'];
 
   for (const permissionId of allPermissionIds) {
-    await prisma.rolePermission.upsert({
+    await withTransientSeedRetry(() => prisma.rolePermission.upsert({
       where: {
         roleId_permissionId: {
           roleId: superAdminRoleId,
@@ -251,7 +306,7 @@ async function seedRolePermissions(
         roleId: superAdminRoleId,
         permissionId,
       },
-    });
+    }));
   }
   console.log(`  ✓ super_admin: ${allPermissionIds.length} permissions`);
 
@@ -267,7 +322,7 @@ async function seedRolePermissions(
         continue;
       }
 
-      await prisma.rolePermission.upsert({
+      await withTransientSeedRetry(() => prisma.rolePermission.upsert({
         where: {
           roleId_permissionId: {
             roleId,
@@ -279,7 +334,7 @@ async function seedRolePermissions(
           roleId,
           permissionId,
         },
-      });
+      }));
     }
     console.log(`  ✓ ${roleName}: ${permissionKeys.length} permissions`);
   }
@@ -288,11 +343,11 @@ async function seedRolePermissions(
 async function seedCustomer() {
   console.log('Seeding default customer...');
 
-  const customer = await prisma.customer.upsert({
+  const customer = await withTransientSeedRetry(() => prisma.customer.upsert({
     where: { externalId: DEFAULT_CUSTOMER.externalId },
     update: {},
     create: DEFAULT_CUSTOMER,
-  });
+  }));
 
   console.log(`  ✓ Customer: ${customer.name} (${customer.id})`);
   return customer.id;
@@ -303,7 +358,7 @@ async function seedSuperAdmin(superAdminRoleId: string, customerId: string) {
 
   const passwordHash = await bcrypt.hash(SUPER_ADMIN.password, SALT_ROUNDS);
 
-  const user = await prisma.user.upsert({
+  const user = await withTransientSeedRetry(() => prisma.user.upsert({
     where: { email: SUPER_ADMIN.email },
     update: {
       passwordHash,
@@ -317,10 +372,10 @@ async function seedSuperAdmin(superAdminRoleId: string, customerId: string) {
       lastName: SUPER_ADMIN.lastName,
       isActive: true,
     },
-  });
+  }));
 
   // Assign super_admin role
-  await prisma.userRole.upsert({
+  await withTransientSeedRetry(() => prisma.userRole.upsert({
     where: {
       userId_roleId: {
         userId: user.id,
@@ -332,10 +387,10 @@ async function seedSuperAdmin(superAdminRoleId: string, customerId: string) {
       userId: user.id,
       roleId: superAdminRoleId,
     },
-  });
+  }));
 
   // Grant access to default customer (super_admin bypasses, but good for completeness)
-  await prisma.userScope.upsert({
+  await withTransientSeedRetry(() => prisma.userScope.upsert({
     where: {
       userId_scopeType_scopeId: {
         userId: user.id,
@@ -349,7 +404,7 @@ async function seedSuperAdmin(superAdminRoleId: string, customerId: string) {
       scopeType: ScopeType.CUSTOMER,
       scopeId: customerId,
     },
-  });
+  }));
 
   console.log(`  ✓ Super Admin: ${user.email} (${user.id})`);
   console.log(`    Password: ${SUPER_ADMIN.password}`);
@@ -378,10 +433,10 @@ async function main() {
     console.log('========================================\n');
 
     // Summary
-    const userCount = await prisma.user.count();
-    const roleCount = await prisma.role.count();
-    const permissionCount = await prisma.permission.count();
-    const customerCount = await prisma.customer.count();
+    const userCount = await withTransientSeedRetry(() => prisma.user.count());
+    const roleCount = await withTransientSeedRetry(() => prisma.role.count());
+    const permissionCount = await withTransientSeedRetry(() => prisma.permission.count());
+    const customerCount = await withTransientSeedRetry(() => prisma.customer.count());
 
     console.log('Summary:');
     console.log(`  Users: ${userCount}`);

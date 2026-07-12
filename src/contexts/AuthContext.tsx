@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import {
+  ApiError,
   api,
   isAuthenticated as hasStoredAuthToken,
   logout as apiLogout,
@@ -12,6 +13,7 @@ import { User } from '@/lib/client/types';
 interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
+  authError: string | null;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
@@ -34,21 +36,35 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const refreshUser = useCallback(async () => {
     if (!hasStoredAuthToken()) {
       setUser(null);
+      setAuthError(null);
       setIsLoading(false);
       return;
     }
 
+    setIsLoading(true);
+    setAuthError(null);
     try {
       const response = await api.get<{ user: User }>('/me');
       setUser(response.user);
+      setAuthError(null);
     } catch (error) {
-      console.error('Failed to fetch user:', error);
-      clearAuthToken();
-      setUser(null);
+      const isExpectedAuthFailure =
+        error instanceof ApiError &&
+        (error.status === 401 || error.code === 'AUTH_REQUIRED');
+      if (!isExpectedAuthFailure) {
+        console.error('Failed to fetch user:', error);
+        setAuthError(error instanceof Error ? error.message : 'Unable to verify your session');
+      }
+      if (isExpectedAuthFailure) {
+        clearAuthToken();
+        setUser(null);
+        setAuthError(null);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -61,12 +77,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const login = useCallback(async (email: string, password: string) => {
     const { login: apiLogin } = await import('@/lib/client/api');
     setIsLoading(true);
+    setAuthError(null);
     try {
       await apiLogin(email, password);
       await refreshUser();
     } catch (error) {
       clearAuthToken();
       setUser(null);
+      setAuthError(null);
       setIsLoading(false);
       throw error;
     }
@@ -75,6 +93,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const logout = useCallback(() => {
     apiLogout();
     setUser(null);
+    setAuthError(null);
   }, []);
 
   const hasPermission = useCallback(
@@ -108,8 +127,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const isSuperAdmin = user?.isSuperAdmin ?? false;
   const isFinance = hasRole('finance') || isSuperAdmin;
   const isAdmin = hasRole('admin') || isSuperAdmin;
-  const hasToken = hasStoredAuthToken();
-  const effectiveIsLoading = isLoading || (hasToken && !user);
+  const effectiveIsLoading = isLoading;
 
   const scopedCustomerIds = (user?.scopes ?? [])
     .filter((s) => s.scopeType === 'CUSTOMER')
@@ -118,6 +136,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const value: AuthContextValue = {
     user,
     isLoading: effectiveIsLoading,
+    authError,
     isAuthenticated: !!user,
     login,
     logout,

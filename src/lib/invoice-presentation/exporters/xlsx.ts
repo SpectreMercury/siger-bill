@@ -8,7 +8,6 @@
 import * as XLSX from 'xlsx';
 import { BillingProvider, BillingSourceType, Prisma, PricingRuleType } from '@prisma/client';
 import { prisma } from '@/lib/db';
-import { loadSkuGroupMappings } from '@/lib/pricing';
 import {
   TEMPLATE_HEADERS,
   type BillingTemplateBuildResult,
@@ -48,6 +47,12 @@ type PricingRuleForExport = {
   effectiveStart: Date | null;
   effectiveEnd: Date | null;
   skuGroups: Array<{ skuGroup: { id: string; code: string } }>;
+};
+
+type SkuGroupMappingForExport = {
+  skuId: string;
+  skuGroupId: string;
+  skuGroupCode: string;
 };
 
 function formatDate(date: Date): string {
@@ -128,6 +133,31 @@ function discountLabel(rule: PricingRuleForExport | null): string {
   return 'Cost * 100%';
 }
 
+async function loadSkuGroupMappingsForSkuIds(skuIds: string[]): Promise<Map<string, SkuGroupMappingForExport>> {
+  const uniqueSkuIds = Array.from(new Set(skuIds.filter(Boolean)));
+  if (uniqueSkuIds.length === 0) return new Map();
+
+  const mappings = await prisma.skuGroupMapping.findMany({
+    where: {
+      sku: { skuId: { in: uniqueSkuIds } },
+    },
+    select: {
+      sku: { select: { skuId: true } },
+      skuGroup: { select: { id: true, code: true } },
+    },
+  });
+
+  const map = new Map<string, SkuGroupMappingForExport>();
+  for (const mapping of mappings) {
+    map.set(mapping.sku.skuId, {
+      skuId: mapping.sku.skuId,
+      skuGroupId: mapping.skuGroup.id,
+      skuGroupCode: mapping.skuGroup.code,
+    });
+  }
+  return map;
+}
+
 async function buildBillingTemplateRows(invoiceId: string): Promise<{
   invoiceNumber: string;
   rows: BillingTemplateRow[];
@@ -200,7 +230,7 @@ async function buildBillingTemplateRows(invoiceId: string): Promise<{
     },
   });
   const rules = pricingList?.pricingRules ?? [];
-  const skuGroupMappings = await loadSkuGroupMappings();
+  const skuGroupMappings = await loadSkuGroupMappingsForSkuIds(lineItems.map((item) => item.meterId));
   const companyName = invoice.customer.externalId || invoice.customer.name;
 
   const rows: BillingTemplateRow[] = [headerRow()];
@@ -378,29 +408,44 @@ export async function buildBillingTemplateRowsForMonth(
     return { rows: [headerRow()], total: 0, page, limit, totalPages: 0 };
   }
 
+  const activeBatches = await prisma.billingIngestionBatch.findMany({
+    where: {
+      provider: BillingProvider.GCP,
+      sourceType: BillingSourceType.BIGQUERY_EXPORT,
+      invoiceMonth: options.billingMonth,
+      isActive: true,
+    },
+    select: { id: true },
+  });
+  const activeBatchIds = activeBatches.map((batch) => batch.id);
+
+  if (activeBatchIds.length === 0) {
+    return { rows: [headerRow()], total: 0, page, limit, totalPages: 0 };
+  }
+
   const where: Prisma.BillingLineItemWhereInput = {
     provider: BillingProvider.GCP,
     sourceType: BillingSourceType.BIGQUERY_EXPORT,
     invoiceMonth: options.billingMonth,
     subaccountId: { in: projectIds },
-    ingestionBatch: { isActive: true },
+    ingestionBatchId: { in: activeBatchIds },
   };
 
-  const [lineItems, total, projectConfigs, skuGroupMappings, rulesByCustomer] = await Promise.all([
-    prisma.billingLineItem.findMany({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      orderBy: [{ usageStartTime: 'asc' }, { subaccountId: 'asc' }, { meterId: 'asc' }],
-    }),
-    prisma.billingLineItem.count({ where }),
-    prisma.projectBillingConfig.findMany({
-      where: { projectId: { in: projectIds } },
-      select: { projectId: true, name: true },
-    }),
-    loadSkuGroupMappings(),
-    loadPricingRulesForCustomers(Array.from(new Set(Array.from(projectCustomers.values()).map((c) => c.id)))),
-  ]);
+  const lineItems = await prisma.billingLineItem.findMany({
+    where,
+    skip: (page - 1) * limit,
+    take: limit,
+    orderBy: [{ usageStartTime: 'asc' }, { subaccountId: 'asc' }, { meterId: 'asc' }],
+  });
+  const total = await prisma.billingLineItem.count({ where });
+  const projectConfigs = await prisma.projectBillingConfig.findMany({
+    where: { projectId: { in: projectIds } },
+    select: { projectId: true, name: true },
+  });
+  const skuGroupMappings = await loadSkuGroupMappingsForSkuIds(lineItems.map((item) => item.meterId));
+  const rulesByCustomer = await loadPricingRulesForCustomers(
+    Array.from(new Set(Array.from(projectCustomers.values()).map((c) => c.id)))
+  );
 
   const [year, month] = options.billingMonth.split('-').map(Number);
   const monthStart = new Date(Date.UTC(year, month - 1, 1));

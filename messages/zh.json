@@ -308,6 +308,7 @@
     "firstName": "名",
     "lastName": "姓",
     "email": "邮箱",
+    "roleLabel": "角色",
     "roles": {
       "super_admin": "超级管理员",
       "super_admin_desc": "拥有所有权限的完整系统控制",

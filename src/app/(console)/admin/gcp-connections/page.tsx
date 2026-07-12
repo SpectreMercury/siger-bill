@@ -490,8 +490,12 @@ export default function GcpConnectionsPage() {
   const fetchRecentSyncJobs = useCallback(async () => {
     try {
       const res = await api.get<{ data: BillingSyncJob[] }>('/billing/sync-jobs?limit=50');
+      const appliedSyncConnectionIds = new Set<string>();
       for (const job of res.data) {
         if (!job.connectionId) continue;
+        const key = syncKey(job.connectionId);
+        if (appliedSyncConnectionIds.has(key)) continue;
+        appliedSyncConnectionIds.add(key);
         applySyncJobState(job);
         if (job.status === 'QUEUED' || job.status === 'RUNNING') {
           pollSyncJob(job.id);

@@ -6,6 +6,7 @@
  */
 
 import { BillingProvider, BillingSourceType, Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
 
 /**
  * Unified billing line item - provider-agnostic cost data
@@ -323,8 +324,7 @@ export const PROVIDER_FIELD_MAPPINGS = {
  * Create a checksum from line items for deduplication
  */
 export function createLineItemsChecksum(lineItems: BillingLineItemDTO[]): string {
-  const crypto = require('crypto');
-  const hash = crypto.createHash('sha256');
+  const hash = createHash('sha256');
 
   // Sort and hash key fields for deterministic checksum
   const sortedItems = [...lineItems].sort((a, b) => {

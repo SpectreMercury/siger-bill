@@ -7,6 +7,11 @@ import {
 } from '@/lib/billing/active-sources';
 import { getCustomerScopes, hasCustomerScope } from '@/lib/auth/context';
 import { AuthContext } from '@/lib/types';
+import { BillingProvider, BillingSourceType } from '@prisma/client';
+
+const BILLING_ACTIVE_BATCH_REUSE_WINDOW_MS = Number(
+  process.env.BILLING_ACTIVE_BATCH_REUSE_WINDOW_MS || 5 * 60 * 1_000
+);
 
 export type BigQueryBillingSyncInput = {
   billingMonth: string;
@@ -22,6 +27,7 @@ export type BigQueryBillingSyncResult = {
     connectionName: string;
     batchId: string;
     rowCount: number;
+    reusedActiveBatch?: boolean;
   }>;
   totalRows: number;
   sourceConflictCount: number;
@@ -57,6 +63,42 @@ export class BigQueryBillingSyncError extends Error {
 
 function fail(message: string, status: number, code?: string, details?: Record<string, unknown>): never {
   throw new BigQueryBillingSyncError(message, status, code, details);
+}
+
+function buildBigQuerySourceKeyForConnection(conn: GcpBillingConnection): string | null {
+  if (!conn.billingProjectId || !conn.billingDatasetId || !conn.billingTableName) return null;
+
+  const source = `${conn.billingProjectId}.${conn.billingDatasetId}.${conn.billingTableName}`;
+  const accountScope = conn.billingAccountIds.length > 0
+    ? [...conn.billingAccountIds].sort().join(',')
+    : '*';
+  return `${source}|billingAccounts=${accountScope}`;
+}
+
+async function findReusableActiveBatchForConnection(
+  conn: GcpBillingConnection,
+  billingMonth: string
+) {
+  const sourceKey = buildBigQuerySourceKeyForConnection(conn);
+  if (!sourceKey) return null;
+  const reusableSince = new Date(
+    Date.now() - Math.max(0, BILLING_ACTIVE_BATCH_REUSE_WINDOW_MS)
+  );
+
+  return prisma.billingIngestionBatch.findFirst({
+    where: {
+      provider: BillingProvider.GCP,
+      sourceType: BillingSourceType.BIGQUERY_EXPORT,
+      invoiceMonth: billingMonth,
+      isActive: true,
+      createdAt: { gte: reusableSince },
+      sourceMetadata: {
+        path: ['sourceKey'],
+        equals: sourceKey,
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
 }
 
 async function resolveConnections(
@@ -182,6 +224,18 @@ export async function runBigQueryBillingSync(
     try {
       if (!conn.billingProjectId || !conn.billingDatasetId || !conn.billingTableName) {
         errors.push(`Connection "${conn.name}" has no BigQuery billing config — skipped`);
+        continue;
+      }
+
+      const reusedActiveBatch = await findReusableActiveBatchForConnection(conn, billingMonth);
+      if (reusedActiveBatch) {
+        results.push({
+          connectionId: conn.id,
+          connectionName: conn.name,
+          batchId: reusedActiveBatch.id,
+          rowCount: reusedActiveBatch.rowCount,
+          reusedActiveBatch: true,
+        });
         continue;
       }
 

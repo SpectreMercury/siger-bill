@@ -38,6 +38,19 @@ function errorResponse(error: ApiError, status: number): NextResponse {
   return NextResponse.json(error, { status });
 }
 
+function middlewareErrorResponse(error: unknown, requestId: string): NextResponse {
+  console.error('API auth middleware failed:', error);
+  return NextResponse.json(
+    {
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR',
+      requestId,
+      timestamp: new Date().toISOString(),
+    },
+    { status: 500 }
+  );
+}
+
 /**
  * Route params passed by Next.js to dynamic route handlers
  * In Next.js 14+, params is a Promise
@@ -90,43 +103,47 @@ export function withAuth(handler: AuthenticatedHandler) {
   return async (request: NextRequest): Promise<NextResponse> => {
     const { ipAddress, userAgent, requestId } = extractRequestMetadata(request);
 
-    // Extract token from header
-    const authHeader = request.headers.get('authorization');
-    const token = extractTokenFromHeader(authHeader);
+    try {
+      // Extract token from header
+      const authHeader = request.headers.get('authorization');
+      const token = extractTokenFromHeader(authHeader);
 
-    if (!token) {
-      return errorResponse(
-        { error: 'Authentication required', code: 'AUTH_REQUIRED' },
-        401
-      );
+      if (!token) {
+        return errorResponse(
+          { error: 'Authentication required', code: 'AUTH_REQUIRED' },
+          401
+        );
+      }
+
+      // Verify token
+      const payload = verifyToken(token);
+      if (!payload) {
+        return errorResponse(
+          { error: 'Invalid or expired token', code: 'INVALID_TOKEN' },
+          401
+        );
+      }
+
+      // Load auth context
+      const auth = await loadAuthContext(payload.sub);
+      if (!auth) {
+        return errorResponse(
+          { error: 'User not found or inactive', code: 'USER_INACTIVE' },
+          401
+        );
+      }
+
+      const requestContext: RequestContext = {
+        auth,
+        requestId,
+        ipAddress,
+        userAgent,
+      };
+
+      return handler(request, requestContext);
+    } catch (error) {
+      return middlewareErrorResponse(error, requestId);
     }
-
-    // Verify token
-    const payload = verifyToken(token);
-    if (!payload) {
-      return errorResponse(
-        { error: 'Invalid or expired token', code: 'INVALID_TOKEN' },
-        401
-      );
-    }
-
-    // Load auth context
-    const auth = await loadAuthContext(payload.sub);
-    if (!auth) {
-      return errorResponse(
-        { error: 'User not found or inactive', code: 'USER_INACTIVE' },
-        401
-      );
-    }
-
-    const requestContext: RequestContext = {
-      auth,
-      requestId,
-      ipAddress,
-      userAgent,
-    };
-
-    return handler(request, requestContext);
   };
 }
 
@@ -146,34 +163,38 @@ export function withAuthParams(handler: AuthenticatedHandlerWithParams) {
   return async (request: NextRequest, routeParams?: RouteParams): Promise<NextResponse> => {
     const { ipAddress, userAgent, requestId } = extractRequestMetadata(request);
 
-    const authHeader = request.headers.get('authorization');
-    const token = extractTokenFromHeader(authHeader);
+    try {
+      const authHeader = request.headers.get('authorization');
+      const token = extractTokenFromHeader(authHeader);
 
-    if (!token) {
-      return errorResponse({ error: 'Authentication required', code: 'AUTH_REQUIRED' }, 401);
+      if (!token) {
+        return errorResponse({ error: 'Authentication required', code: 'AUTH_REQUIRED' }, 401);
+      }
+
+      const payload = verifyToken(token);
+      if (!payload) {
+        return errorResponse({ error: 'Invalid or expired token', code: 'INVALID_TOKEN' }, 401);
+      }
+
+      const auth = await loadAuthContext(payload.sub);
+      if (!auth) {
+        return errorResponse({ error: 'User not found or inactive', code: 'USER_INACTIVE' }, 401);
+      }
+
+      const resolvedParams = routeParams?.params ? await routeParams.params : {};
+
+      const extendedContext: ExtendedRequestContext = {
+        auth,
+        requestId,
+        ipAddress,
+        userAgent,
+        params: resolvedParams,
+      };
+
+      return handler(request, extendedContext);
+    } catch (error) {
+      return middlewareErrorResponse(error, requestId);
     }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return errorResponse({ error: 'Invalid or expired token', code: 'INVALID_TOKEN' }, 401);
-    }
-
-    const auth = await loadAuthContext(payload.sub);
-    if (!auth) {
-      return errorResponse({ error: 'User not found or inactive', code: 'USER_INACTIVE' }, 401);
-    }
-
-    const resolvedParams = routeParams?.params ? await routeParams.params : {};
-
-    const extendedContext: ExtendedRequestContext = {
-      auth,
-      requestId,
-      ipAddress,
-      userAgent,
-      params: resolvedParams,
-    };
-
-    return handler(request, extendedContext);
   };
 }
 
@@ -207,58 +228,62 @@ export function withPermission(
   return async (request: NextRequest, routeParams?: RouteParams): Promise<NextResponse> => {
     const { ipAddress, userAgent, requestId } = extractRequestMetadata(request);
 
-    // Extract token from header
-    const authHeader = request.headers.get('authorization');
-    const token = extractTokenFromHeader(authHeader);
+    try {
+      // Extract token from header
+      const authHeader = request.headers.get('authorization');
+      const token = extractTokenFromHeader(authHeader);
 
-    if (!token) {
-      return errorResponse(
-        { error: 'Authentication required', code: 'AUTH_REQUIRED' },
-        401
-      );
+      if (!token) {
+        return errorResponse(
+          { error: 'Authentication required', code: 'AUTH_REQUIRED' },
+          401
+        );
+      }
+
+      // Verify token
+      const payload = verifyToken(token);
+      if (!payload) {
+        return errorResponse(
+          { error: 'Invalid or expired token', code: 'INVALID_TOKEN' },
+          401
+        );
+      }
+
+      // Load auth context
+      const auth = await loadAuthContext(payload.sub);
+      if (!auth) {
+        return errorResponse(
+          { error: 'User not found or inactive', code: 'USER_INACTIVE' },
+          401
+        );
+      }
+
+      if (!hasPermission(auth, permission.resource, permission.action)) {
+        return errorResponse(
+          {
+            error: 'Permission denied',
+            code: 'PERMISSION_DENIED',
+            details: { required: `${permission.resource}:${permission.action}` },
+          },
+          403
+        );
+      }
+
+      // Resolve params Promise for Next.js 14+ compatibility
+      const resolvedParams = routeParams?.params ? await routeParams.params : {};
+
+      const extendedContext: ExtendedRequestContext = {
+        auth,
+        requestId,
+        ipAddress,
+        userAgent,
+        params: resolvedParams,
+      };
+
+      return handler(request, extendedContext);
+    } catch (error) {
+      return middlewareErrorResponse(error, requestId);
     }
-
-    // Verify token
-    const payload = verifyToken(token);
-    if (!payload) {
-      return errorResponse(
-        { error: 'Invalid or expired token', code: 'INVALID_TOKEN' },
-        401
-      );
-    }
-
-    // Load auth context
-    const auth = await loadAuthContext(payload.sub);
-    if (!auth) {
-      return errorResponse(
-        { error: 'User not found or inactive', code: 'USER_INACTIVE' },
-        401
-      );
-    }
-
-    if (!hasPermission(auth, permission.resource, permission.action)) {
-      return errorResponse(
-        {
-          error: 'Permission denied',
-          code: 'PERMISSION_DENIED',
-          details: { required: `${permission.resource}:${permission.action}` },
-        },
-        403
-      );
-    }
-
-    // Resolve params Promise for Next.js 14+ compatibility
-    const resolvedParams = routeParams?.params ? await routeParams.params : {};
-
-    const extendedContext: ExtendedRequestContext = {
-      auth,
-      requestId,
-      ipAddress,
-      userAgent,
-      params: resolvedParams,
-    };
-
-    return handler(request, extendedContext);
   };
 }
 
@@ -335,75 +360,79 @@ export function withPermissionAndScope(
   return async (request: NextRequest, routeParams?: RouteParams): Promise<NextResponse> => {
     const { ipAddress, userAgent, requestId } = extractRequestMetadata(request);
 
-    // Extract token from header
-    const authHeader = request.headers.get('authorization');
-    const token = extractTokenFromHeader(authHeader);
+    try {
+      // Extract token from header
+      const authHeader = request.headers.get('authorization');
+      const token = extractTokenFromHeader(authHeader);
 
-    if (!token) {
-      return errorResponse(
-        { error: 'Authentication required', code: 'AUTH_REQUIRED' },
-        401
-      );
-    }
+      if (!token) {
+        return errorResponse(
+          { error: 'Authentication required', code: 'AUTH_REQUIRED' },
+          401
+        );
+      }
 
-    // Verify token
-    const payload = verifyToken(token);
-    if (!payload) {
-      return errorResponse(
-        { error: 'Invalid or expired token', code: 'INVALID_TOKEN' },
-        401
-      );
-    }
+      // Verify token
+      const payload = verifyToken(token);
+      if (!payload) {
+        return errorResponse(
+          { error: 'Invalid or expired token', code: 'INVALID_TOKEN' },
+          401
+        );
+      }
 
-    // Load auth context
-    const auth = await loadAuthContext(payload.sub);
-    if (!auth) {
-      return errorResponse(
-        { error: 'User not found or inactive', code: 'USER_INACTIVE' },
-        401
-      );
-    }
+      // Load auth context
+      const auth = await loadAuthContext(payload.sub);
+      if (!auth) {
+        return errorResponse(
+          { error: 'User not found or inactive', code: 'USER_INACTIVE' },
+          401
+        );
+      }
 
-    // Check permission first
-    if (!hasPermission(auth, permission.resource, permission.action)) {
-      return errorResponse(
-        {
-          error: 'Permission denied',
-          code: 'PERMISSION_DENIED',
-          details: { required: `${permission.resource}:${permission.action}` },
-        },
-        403
-      );
-    }
-
-    // Resolve params Promise for Next.js 14+ compatibility
-    const resolvedParams = routeParams?.params ? await routeParams.params : {};
-    const resolvedRouteParams: ResolvedRouteParams = { params: resolvedParams };
-
-    // Then check scope (skip for super_admin)
-    if (!auth.isSuperAdmin) {
-      const customerId = await Promise.resolve(getCustomerId(request, resolvedRouteParams));
-
-      if (customerId && !hasCustomerScope(auth, customerId)) {
+      // Check permission first
+      if (!hasPermission(auth, permission.resource, permission.action)) {
         return errorResponse(
           {
-            error: 'Access denied to this customer',
-            code: 'SCOPE_DENIED',
-            details: { customerId },
+            error: 'Permission denied',
+            code: 'PERMISSION_DENIED',
+            details: { required: `${permission.resource}:${permission.action}` },
           },
           403
         );
       }
+
+      // Resolve params Promise for Next.js 14+ compatibility
+      const resolvedParams = routeParams?.params ? await routeParams.params : {};
+      const resolvedRouteParams: ResolvedRouteParams = { params: resolvedParams };
+
+      // Then check scope (skip for super_admin)
+      if (!auth.isSuperAdmin) {
+        const customerId = await Promise.resolve(getCustomerId(request, resolvedRouteParams));
+
+        if (customerId && !hasCustomerScope(auth, customerId)) {
+          return errorResponse(
+            {
+              error: 'Access denied to this customer',
+              code: 'SCOPE_DENIED',
+              details: { customerId },
+            },
+            403
+          );
+        }
+      }
+
+      const extendedContext: ExtendedRequestContext = {
+        auth,
+        requestId,
+        ipAddress,
+        userAgent,
+        params: resolvedParams,
+      };
+
+      return handler(request, extendedContext);
+    } catch (error) {
+      return middlewareErrorResponse(error, requestId);
     }
-
-    const extendedContext: ExtendedRequestContext = {
-      auth,
-      requestId,
-      ipAddress,
-      userAgent,
-      params: resolvedParams,
-    };
-
-    return handler(request, extendedContext);
   };
 }

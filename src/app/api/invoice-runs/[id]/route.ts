@@ -11,8 +11,6 @@ import { prisma } from '@/lib/db';
 import { withPermission } from '@/lib/middleware';
 import { success, notFound, serverError } from '@/lib/utils';
 
-type RouteParams = { params: Promise<{ id: string }> };
-
 /**
  * GET /api/invoice-runs/[id]
  *
@@ -20,9 +18,9 @@ type RouteParams = { params: Promise<{ id: string }> };
  */
 export const GET = withPermission(
   { resource: 'invoice_runs', action: 'read' },
-  async (request: NextRequest, context, routeContext?: RouteParams): Promise<NextResponse> => {
+  async (_request: NextRequest, context): Promise<NextResponse> => {
     try {
-      const { id } = await routeContext!.params;
+      const id = context.params.id;
 
       const invoiceRun = await prisma.invoiceRun.findUnique({
         where: { id },

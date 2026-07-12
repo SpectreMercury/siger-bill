@@ -1,1 +1,6 @@
-export { prisma, default } from './prisma';
+export {
+  prisma,
+  default,
+  isTransientPrismaError,
+  withTransientPrismaRetry,
+} from './prisma';

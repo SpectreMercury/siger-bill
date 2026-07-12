@@ -474,6 +474,7 @@ model BillingLineItem {
   @@index([accountId, invoiceMonth])
   @@index([subaccountId, usageStartTime])
   @@index([ingestionBatchId])
+  @@index([ingestionBatchId, subaccountId, usageStartTime, meterId], map: "billing_line_items_monthly_template_idx")
   @@index([usageStartTime, usageEndTime])
   @@index([productId, meterId])
   @@map("billing_line_items")
@@ -496,6 +497,7 @@ model BillingIngestionBatch {
 
   createdBy String   @map("created_by") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   creator         User                    @relation("BillingIngestionCreator", fields: [createdBy], references: [id], onDelete: Restrict)

@@ -42,8 +42,15 @@ assert(
 
 const unifiedEngine = read('src/lib/billing/unified-engine.ts');
 assert(
-  !unifiedEngine.includes('billingIngestionBatch.deleteMany'),
-  'BigQuery sync must not delete old ingestion batches'
+  unifiedEngine.includes('billingIngestionBatch.deleteMany') &&
+    unifiedEngine.includes('id: batchId') &&
+    unifiedEngine.includes('isActive: false') &&
+    unifiedEngine.includes('updatedAt: { lte: staleBefore }'),
+  'BigQuery sync may only delete the specific stale incomplete inactive batch'
+);
+assert(
+  !unifiedEngine.includes('billingIngestionBatch.deleteMany({\n      where: sameSourceWhere'),
+  'BigQuery sync must not delete historical batches for the same source'
 );
 assert(
   unifiedEngine.includes('isActive: false') && unifiedEngine.includes('supersededAt'),
@@ -60,15 +67,15 @@ assert(
   'Monthly BigQuery template fallback must exclude manual override line items'
 );
 assert(
-  xlsxExporter.includes('ingestionBatch: { isActive: true }'),
+  xlsxExporter.includes('activeBatchIds') && xlsxExporter.includes('ingestionBatchId: { in: activeBatchIds }'),
   'Monthly BigQuery template fallback must read only active batches'
 );
 
-const fetchRoute = read('src/app/api/billing/fetch/route.ts');
-assert(fetchRoute.includes('getBillingMonthLockReason'), 'BigQuery fetch route must block locked months');
-assert(fetchRoute.includes('LOCKED_BILLING_MONTH'), 'BigQuery fetch route must return a lock-specific conflict code');
-assert(fetchRoute.includes('affectedCustomerIds'), 'BigQuery fetch route must lock-check all customers affected by synced connections');
-assert(fetchRoute.includes('sourceConflicts'), 'BigQuery fetch route must return source overlap warnings');
+const bigQuerySync = read('src/lib/billing/bigquery-sync.ts');
+assert(bigQuerySync.includes('getBillingMonthLockReason'), 'BigQuery sync must block locked months');
+assert(bigQuerySync.includes('LOCKED_BILLING_MONTH'), 'BigQuery sync must return a lock-specific conflict code');
+assert(bigQuerySync.includes('affectedCustomerIds'), 'BigQuery sync must lock-check all customers affected by synced connections');
+assert(bigQuerySync.includes('sourceConflicts'), 'BigQuery sync must return source overlap warnings');
 
 const executeRoute = read('src/app/api/invoice-runs/[id]/execute/route.ts');
 assert(executeRoute.includes('getBillingMonthLockReason'), 'BigQuery invoice execution must guard refetches');

@@ -58,28 +58,26 @@ export async function getBillingMonthLockReason(
   billingMonth: string,
   options: BillingMonthLockOptions = {}
 ): Promise<string | null> {
-  const [lockedInvoice, lockedRun] = await Promise.all([
-    prisma.invoice.findFirst({
-      where: {
-        billingMonth,
-        status: InvoiceStatus.LOCKED,
-        ...invoiceCustomerFilter(options),
-      },
-      select: { id: true, invoiceNumber: true },
-    }),
-    prisma.invoiceRun.findFirst({
-      where: {
-        billingMonth,
-        status: InvoiceRunStatus.LOCKED,
-        ...invoiceRunCustomerFilter(options),
-      },
-      select: { id: true },
-    }),
-  ]);
-
+  const lockedInvoice = await prisma.invoice.findFirst({
+    where: {
+      billingMonth,
+      status: InvoiceStatus.LOCKED,
+      ...invoiceCustomerFilter(options),
+    },
+    select: { id: true, invoiceNumber: true },
+  });
   if (lockedInvoice) {
     return `Billing month ${billingMonth} has locked invoice ${lockedInvoice.invoiceNumber}`;
   }
+
+  const lockedRun = await prisma.invoiceRun.findFirst({
+    where: {
+      billingMonth,
+      status: InvoiceRunStatus.LOCKED,
+      ...invoiceRunCustomerFilter(options),
+    },
+    select: { id: true },
+  });
   if (lockedRun) {
     return `Billing month ${billingMonth} has a locked invoice run`;
   }

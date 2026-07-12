@@ -146,16 +146,14 @@ function rowToRecord(row: unknown[], headerIndex: Map<string, number>): RowRecor
 }
 
 async function loadCustomerResolver(forcedCustomerId?: string) {
-  const [customers, bindings] = await Promise.all([
-    prisma.customer.findMany({
-      select: { id: true, name: true, externalId: true },
-    }),
-    prisma.customerProject.findMany({
-      where: { isActive: true },
-      select: { projectId: true, customerId: true },
-      orderBy: { createdAt: 'desc' },
-    }),
-  ]);
+  const customers = await prisma.customer.findMany({
+    select: { id: true, name: true, externalId: true },
+  });
+  const bindings = await prisma.customerProject.findMany({
+    where: { isActive: true },
+    select: { projectId: true, customerId: true },
+    orderBy: { createdAt: 'desc' },
+  });
 
   const byProjectId = new Map(bindings.map((binding) => [binding.projectId, binding.customerId]));
   const byName = new Map<string, string>();
@@ -338,15 +336,13 @@ export async function buildOverrideTemplateRowsForMonth(options: {
     ...(options.customerId ? { customerId: options.customerId } : {}),
   };
 
-  const [lines, total] = await Promise.all([
-    prisma.billingMonthlyOverrideLine.findMany({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      orderBy: { rowNumber: 'asc' },
-    }),
-    prisma.billingMonthlyOverrideLine.count({ where }),
-  ]);
+  const lines = await prisma.billingMonthlyOverrideLine.findMany({
+    where,
+    skip: (page - 1) * limit,
+    take: limit,
+    orderBy: { rowNumber: 'asc' },
+  });
+  const total = await prisma.billingMonthlyOverrideLine.count({ where });
 
   return {
     rows: [headerRow(), ...lines.map(overrideLineToTemplateRow)],

@@ -193,7 +193,7 @@ export default function UsersPage() {
       },
       {
         accessorKey: 'roles',
-        header: t('roles'),
+        header: t('roleLabel'),
         cell: ({ row }) => (
           <div className="flex flex-wrap gap-1">
             {row.original.roles.map((role) => (

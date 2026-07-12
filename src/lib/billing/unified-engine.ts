@@ -18,7 +18,7 @@
  * Backward compatible: Can still process RawCostEntry (GCP-specific)
  */
 
-import { prisma } from '@/lib/db';
+import { prisma, withTransientPrismaRetry } from '@/lib/db';
 import {
   BillingProvider,
   BillingSourceType,
@@ -52,7 +52,21 @@ import {
   createLineItemsChecksum,
 } from './adapters';
 
-const BILLING_LINE_ITEM_INSERT_CHUNK_SIZE = 1_000;
+const BILLING_LINE_ITEM_INSERT_CHUNK_SIZE = Number(
+  process.env.BILLING_LINE_ITEM_INSERT_CHUNK_SIZE || 1_000
+);
+const BILLING_BULK_INSERT_STATEMENT_TIMEOUT_MS = Number(
+  process.env.BILLING_BULK_INSERT_STATEMENT_TIMEOUT_MS || 45_000
+);
+const BILLING_INCOMPLETE_BATCH_STALE_AFTER_MS = Number(
+  process.env.BILLING_INCOMPLETE_BATCH_STALE_AFTER_MS || 30 * 60 * 1_000
+);
+const BILLING_INGEST_TRANSACTION_MAX_WAIT_MS = Number(
+  process.env.BILLING_INGEST_TRANSACTION_MAX_WAIT_MS || 30_000
+);
+const BILLING_INGEST_TRANSACTION_TIMEOUT_MS = Number(
+  process.env.BILLING_INGEST_TRANSACTION_TIMEOUT_MS || 600_000
+);
 
 type BillingSourceIdentity = {
   sourceKey: string | null;
@@ -327,39 +341,178 @@ export async function ingestFromAdapter(
     return { batchId: activeBatch.id, rowCount: activeBatch.rowCount };
   };
 
-  const existingBatch = await prisma.billingIngestionBatch.findFirst({
-    where: uniqueBatchWhere,
-  });
+  const cleanupIncompleteBatch = async (batchId: string, staleBefore?: Date) => {
+    return prisma.billingIngestionBatch.deleteMany({
+      where: {
+        id: batchId,
+        isActive: false,
+        ...(staleBefore ? { updatedAt: { lte: staleBefore } } : {}),
+      },
+    });
+  };
 
-  if (existingBatch) {
-    return reuseBatch(
-      existingBatch.id,
-      `Reusing active batch for ${adapter.provider} ${month} with same checksum`
-    );
-  }
+  const isCompleteBatch = async (batch: { id: string; rowCount: number }) => {
+    if (batch.rowCount !== result.lineItems.length) return false;
 
-  // Create ingestion batch and line items in transaction
-  try {
-    const batch = await prisma.$transaction(
+    const lineItemCount = await prisma.billingLineItem.count({
+      where: { ingestionBatchId: batch.id },
+    });
+    return lineItemCount === batch.rowCount;
+  };
+
+  const decimalToString = (value: unknown) => (value === null || value === undefined ? null : String(value));
+  const dateToIsoString = (value: Date | string) =>
+    value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+
+  const toBulkInsertRows = (items: BillingLineItemDTO[]) =>
+    items.map((item) => ({
+      account_id: item.accountId,
+      billing_account_name: item.billingAccountName ?? billingAccountNameById.get(item.accountId) ?? null,
+      subaccount_id: item.subaccountId ?? null,
+      project_name: item.projectName ?? null,
+      resource_id: item.resourceId ?? null,
+      product_id: item.productId,
+      service_description: item.serviceDescription ?? null,
+      meter_id: item.meterId,
+      sku_description: item.skuDescription ?? null,
+      usage_amount: decimalToString(item.usageAmount),
+      usage_unit: item.usageUnit,
+      pricing_usage_amount: decimalToString(item.pricingUsageAmount),
+      pricing_usage_unit: item.pricingUsageUnit ?? null,
+      cost: decimalToString(item.cost),
+      list_cost: decimalToString(item.listCost),
+      credit_amount: decimalToString(item.creditAmount),
+      cost_after_credit: decimalToString(item.costAfterCredit),
+      currency: item.currency,
+      currency_conversion_rate: decimalToString(item.currencyConversionRate),
+      credit_breakdown: item.creditBreakdown ?? null,
+      transaction_type: item.transactionType ?? null,
+      usage_start_time: dateToIsoString(item.usageStartTime),
+      usage_end_time: dateToIsoString(item.usageEndTime),
+      invoice_month: item.invoiceMonth,
+      region: item.region,
+      tags: item.tags ?? null,
+      raw_payload: item.rawPayload ?? null,
+    }));
+
+  const bulkInsertLineItemChunk = async (batchId: string, items: BillingLineItemDTO[]) => {
+    const rows = JSON.stringify(toBulkInsertRows(items));
+    const statementTimeoutMs = Math.max(1_000, BILLING_BULK_INSERT_STATEMENT_TIMEOUT_MS);
+    await prisma.$transaction(
       async (tx) => {
-        const newBatch = await tx.billingIngestionBatch.create({
-          data: {
-            provider: adapter.provider,
-            sourceType: adapter.sourceType,
-            invoiceMonth: month,
-            rowCount: result.lineItems.length,
-            checksum: result.checksum,
-            sourceMetadata: result.sourceMetadata as Prisma.InputJsonValue,
-            isActive: true,
-            supersededAt: null,
-            createdBy: userId,
-          },
-        });
+        await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${statementTimeoutMs}ms'`);
+        await tx.$executeRawUnsafe(`SET LOCAL idle_in_transaction_session_timeout = '${statementTimeoutMs}ms'`);
+        await tx.$executeRaw`
+          INSERT INTO "billing_line_items" (
+            "id",
+            "ingestion_batch_id",
+            "provider",
+            "source_type",
+            "account_id",
+            "billing_account_name",
+            "subaccount_id",
+            "project_name",
+            "resource_id",
+            "product_id",
+            "service_description",
+            "meter_id",
+            "sku_description",
+            "usage_amount",
+            "usage_unit",
+            "pricing_usage_amount",
+            "pricing_usage_unit",
+            "cost",
+            "list_cost",
+            "credit_amount",
+            "cost_after_credit",
+            "currency",
+            "currency_conversion_rate",
+            "credit_breakdown",
+            "transaction_type",
+            "usage_start_time",
+            "usage_end_time",
+            "invoice_month",
+            "region",
+            "tags",
+            "raw_payload"
+          )
+          SELECT
+            gen_random_uuid(),
+            ${batchId}::uuid,
+            ${adapter.provider}::billing_provider,
+            ${adapter.sourceType}::billing_source_type,
+            row.account_id::varchar(100),
+            row.billing_account_name::varchar(255),
+            row.subaccount_id::varchar(100),
+            row.project_name::varchar(255),
+            row.resource_id::varchar(255),
+            row.product_id::varchar(100),
+            row.service_description::varchar(255),
+            row.meter_id::varchar(100),
+            row.sku_description::varchar(500),
+            row.usage_amount::numeric,
+            row.usage_unit::varchar(50),
+            row.pricing_usage_amount::numeric,
+            row.pricing_usage_unit::varchar(50),
+            row.cost::numeric,
+            row.list_cost::numeric,
+            row.credit_amount::numeric,
+            row.cost_after_credit::numeric,
+            row.currency::varchar(3),
+            row.currency_conversion_rate::numeric,
+            row.credit_breakdown,
+            row.transaction_type::varchar(100),
+            row.usage_start_time::timestamptz,
+            row.usage_end_time::timestamptz,
+            row.invoice_month::varchar(7),
+            row.region::varchar(50),
+            row.tags,
+            row.raw_payload
+          FROM jsonb_to_recordset(${rows}::jsonb) AS row(
+            account_id text,
+            billing_account_name text,
+            subaccount_id text,
+            project_name text,
+            resource_id text,
+            product_id text,
+            service_description text,
+            meter_id text,
+            sku_description text,
+            usage_amount text,
+            usage_unit text,
+            pricing_usage_amount text,
+            pricing_usage_unit text,
+            cost text,
+            list_cost text,
+            credit_amount text,
+            cost_after_credit text,
+            currency text,
+            currency_conversion_rate text,
+            credit_breakdown jsonb,
+            transaction_type text,
+            usage_start_time text,
+            usage_end_time text,
+            invoice_month text,
+            region text,
+            tags jsonb,
+            raw_payload jsonb
+          )
+        `;
+      },
+      {
+        maxWait: BILLING_INGEST_TRANSACTION_MAX_WAIT_MS,
+        timeout: statementTimeoutMs + 5_000,
+      }
+    );
+  };
 
+  const activateLoadedBatch = async (batchId: string) => {
+    return prisma.$transaction(
+      async (tx) => {
         await tx.billingIngestionBatch.updateMany({
           where: {
             ...sameSourceWhere,
-            id: { not: newBatch.id },
+            id: { not: batchId },
             isActive: true,
           },
           data: {
@@ -368,65 +521,140 @@ export async function ingestFromAdapter(
           },
         });
 
-        for (let offset = 0; offset < result.lineItems.length; offset += BILLING_LINE_ITEM_INSERT_CHUNK_SIZE) {
-          const chunk = result.lineItems.slice(offset, offset + BILLING_LINE_ITEM_INSERT_CHUNK_SIZE);
-
-          await tx.billingLineItem.createMany({
-            data: chunk.map((item) => ({
-              ingestionBatchId: newBatch.id,
-              provider: item.provider,
-              sourceType: item.sourceType,
-              accountId: item.accountId,
-              billingAccountName: item.billingAccountName ?? billingAccountNameById.get(item.accountId) ?? null,
-              subaccountId: item.subaccountId,
-              projectName: item.projectName,
-              resourceId: item.resourceId,
-              productId: item.productId,
-              serviceDescription: item.serviceDescription,
-              meterId: item.meterId,
-              skuDescription: item.skuDescription,
-              usageAmount: item.usageAmount,
-              usageUnit: item.usageUnit,
-              pricingUsageAmount: item.pricingUsageAmount,
-              pricingUsageUnit: item.pricingUsageUnit,
-              cost: item.cost,
-              listCost: item.listCost,
-              creditAmount: item.creditAmount,
-              costAfterCredit: item.costAfterCredit,
-              currency: item.currency,
-              currencyConversionRate: item.currencyConversionRate,
-              creditBreakdown: item.creditBreakdown as Prisma.InputJsonValue,
-              transactionType: item.transactionType,
-              usageStartTime: item.usageStartTime,
-              usageEndTime: item.usageEndTime,
-              invoiceMonth: item.invoiceMonth,
-              region: item.region,
-              tags: item.tags as Prisma.InputJsonValue,
-              rawPayload: item.rawPayload as Prisma.InputJsonValue,
-            })),
-          });
-        }
-
-        return newBatch;
+        return tx.billingIngestionBatch.update({
+          where: { id: batchId },
+          data: {
+            rowCount: result.lineItems.length,
+            isActive: true,
+            supersededAt: null,
+          },
+        });
       },
       {
-        maxWait: 10_000,
-        timeout: 240_000,
+        maxWait: BILLING_INGEST_TRANSACTION_MAX_WAIT_MS,
+        timeout: 30_000,
       }
     );
+  };
+
+  const existingBatch = await prisma.billingIngestionBatch.findFirst({
+    where: uniqueBatchWhere,
+  });
+  const incompleteBatchStaleBefore = new Date(
+    Date.now() - Math.max(60_000, BILLING_INCOMPLETE_BATCH_STALE_AFTER_MS)
+  );
+
+  if (existingBatch) {
+    if (!(await isCompleteBatch(existingBatch))) {
+      if (!existingBatch.isActive) {
+        if (existingBatch.updatedAt <= incompleteBatchStaleBefore) {
+          const cleanupResult = await cleanupIncompleteBatch(
+            existingBatch.id,
+            incompleteBatchStaleBefore
+          );
+          if (cleanupResult.count !== 1) {
+            throw new Error(
+              `Billing ingestion batch ${existingBatch.id} for ${adapter.provider} ${month} is already loading`
+            );
+          }
+        } else {
+          throw new Error(
+            `Billing ingestion batch ${existingBatch.id} for ${adapter.provider} ${month} is already loading`
+          );
+        }
+      } else {
+        throw new Error(
+          `Existing active batch ${existingBatch.id} for ${adapter.provider} ${month} is incomplete`
+        );
+      }
+    } else {
+      return reuseBatch(
+        existingBatch.id,
+        `Reusing active batch for ${adapter.provider} ${month} with same checksum`
+      );
+    }
+  }
+
+  const incompleteBatchAfterCleanup = await prisma.billingIngestionBatch.findFirst({
+    where: uniqueBatchWhere,
+  });
+
+  if (incompleteBatchAfterCleanup) {
+    if (await isCompleteBatch(incompleteBatchAfterCleanup)) {
+      return reuseBatch(
+        incompleteBatchAfterCleanup.id,
+        `Reusing active batch for ${adapter.provider} ${month} after incomplete batch cleanup race`
+      );
+    }
+    throw new Error(
+      `Billing ingestion batch ${incompleteBatchAfterCleanup.id} for ${adapter.provider} ${month} is already loading`
+    );
+  }
+
+  // Create inactive batch first, load line items in chunks, then activate in a short transaction.
+  let batchId: string | null = null;
+  try {
+    const batch = await prisma.billingIngestionBatch.create({
+      data: {
+        provider: adapter.provider,
+        sourceType: adapter.sourceType,
+        invoiceMonth: month,
+        rowCount: 0,
+        checksum: result.checksum,
+        sourceMetadata: result.sourceMetadata as Prisma.InputJsonValue,
+        isActive: false,
+        supersededAt: null,
+        createdBy: userId,
+      },
+    });
+    batchId = batch.id;
+
+    for (let offset = 0; offset < result.lineItems.length; offset += BILLING_LINE_ITEM_INSERT_CHUNK_SIZE) {
+      const chunk = result.lineItems.slice(offset, offset + BILLING_LINE_ITEM_INSERT_CHUNK_SIZE);
+      await bulkInsertLineItemChunk(batch.id, chunk);
+      const heartbeat = await prisma.billingIngestionBatch.updateMany({
+        where: { id: batch.id, isActive: false },
+        data: { updatedAt: new Date() },
+      });
+      if (heartbeat.count !== 1) {
+        throw new Error(`Billing ingestion batch ${batch.id} lost its loading lease`);
+      }
+    }
+
+    const loadedLineItemCount = await prisma.billingLineItem.count({
+      where: { ingestionBatchId: batch.id },
+    });
+    if (loadedLineItemCount !== result.lineItems.length) {
+      throw new Error(
+        `Loaded ${loadedLineItemCount} line items for batch ${batch.id}, expected ${result.lineItems.length}`
+      );
+    }
+
+    const activeBatch = await withTransientPrismaRetry(() => activateLoadedBatch(batch.id));
 
     console.log(`Ingested ${result.lineItems.length} line items from ${adapter.provider} for ${month}`);
-    return { batchId: batch.id, rowCount: batch.rowCount };
+    return { batchId: activeBatch.id, rowCount: activeBatch.rowCount };
   } catch (error) {
+    if (batchId) {
+      await cleanupIncompleteBatch(batchId).catch((cleanupError) => {
+        console.error('Failed to clean up incomplete billing ingestion batch:', cleanupError);
+      });
+    }
+
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       const racedBatch = await prisma.billingIngestionBatch.findFirst({
         where: uniqueBatchWhere,
       });
 
-      if (racedBatch) {
+      if (racedBatch && (await isCompleteBatch(racedBatch))) {
         return reuseBatch(
           racedBatch.id,
           `Reusing active batch for ${adapter.provider} ${month} after duplicate create race`
+        );
+      }
+      if (racedBatch) {
+        throw new Error(
+          `Billing ingestion batch ${racedBatch.id} for ${adapter.provider} ${month} is already loading`
         );
       }
     }

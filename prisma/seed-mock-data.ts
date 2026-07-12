@@ -22,6 +22,61 @@ dotenv.config();
 const connectionString = process.env.DATABASE_URL!;
 const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
+const SEED_RETRY_ATTEMPTS = 4;
+const SEED_RETRY_DELAY_MS = 250;
+
+function getErrorCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
+}
+
+function getErrorMessages(error: unknown, seen = new Set<unknown>()): string[] {
+  if (!error || seen.has(error)) return [];
+  seen.add(error);
+
+  const messages = [error instanceof Error ? error.message : String(error)];
+  if (typeof error === 'object' && 'cause' in error) {
+    messages.push(...getErrorMessages((error as { cause?: unknown }).cause, seen));
+  }
+  return messages;
+}
+
+function isTransientSeedError(error: unknown): boolean {
+  const code = getErrorCode(error);
+  if (code && ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'P1001', 'P1017'].includes(code)) {
+    return true;
+  }
+
+  const message = getErrorMessages(error).join('\n');
+  return [
+    'Client has encountered a connection error and is not queryable',
+    'Client network socket disconnected before secure TLS connection was established',
+    'Connection terminated due to connection timeout',
+    'Connection terminated unexpectedly',
+    'terminating connection due to administrator command',
+  ].some((snippet) => message.includes(snippet));
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTransientSeedRetry<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; attempt <= SEED_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt < SEED_RETRY_ATTEMPTS && isTransientSeedError(error)) {
+        await wait(SEED_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return operation();
+}
 
 // ============================================================================
 // MOCK DATA CONFIGURATION
@@ -162,14 +217,14 @@ async function seedCustomers() {
   const customerIds: string[] = [];
 
   for (const customer of CUSTOMERS) {
-    const created = await prisma.customer.upsert({
+    const created = await withTransientSeedRetry(() => prisma.customer.upsert({
       where: { externalId: customer.externalId },
       update: {},
       create: {
         ...customer,
         status: CustomerStatus.ACTIVE,
       },
-    });
+    }));
     customerIds.push(created.id);
     console.log(`  ✓ Customer: ${created.name}`);
   }
@@ -184,7 +239,7 @@ async function seedBillingAccountsAndProjects() {
 
   // Create billing accounts
   for (const ba of BILLING_ACCOUNTS) {
-    const created = await prisma.billingAccount.upsert({
+    const created = await withTransientSeedRetry(() => prisma.billingAccount.upsert({
       where: { billingAccountId: ba.billingAccountId },
       update: {},
       create: {
@@ -192,14 +247,14 @@ async function seedBillingAccountsAndProjects() {
         name: ba.name,
         status: BillingAccountStatus.ACTIVE,
       },
-    });
+    }));
     billingAccountIds.push(created.id);
     console.log(`  ✓ Billing Account: ${ba.name}`);
   }
 
   // Create projects
   for (const proj of PROJECTS) {
-    const created = await prisma.project.upsert({
+    const created = await withTransientSeedRetry(() => prisma.project.upsert({
       where: { projectId: proj.projectId },
       update: {},
       create: {
@@ -208,8 +263,22 @@ async function seedBillingAccountsAndProjects() {
         status: ProjectStatus.ACTIVE,
         billingAccountId: billingAccountIds[proj.billingAccountIndex],
       },
-    });
-    projectIds.push(created.id);
+    }));
+    await withTransientSeedRetry(() => prisma.projectBillingConfig.upsert({
+      where: { projectId: proj.projectId },
+      update: {
+        name: proj.name,
+        billable: true,
+        billingAccountId: billingAccountIds[proj.billingAccountIndex],
+      },
+      create: {
+        projectId: proj.projectId,
+        name: proj.name,
+        billable: true,
+        billingAccountId: billingAccountIds[proj.billingAccountIndex],
+      },
+    }));
+    projectIds.push(created.projectId);
     console.log(`  ✓ Project: ${proj.name}`);
   }
 
@@ -229,7 +298,7 @@ async function seedCustomerProjects(customerIds: string[], projectIds: string[])
 
   for (const mapping of mappings) {
     for (const projIdx of mapping.projectIndices) {
-      await prisma.customerProject.upsert({
+      await withTransientSeedRetry(() => prisma.customerProject.upsert({
         where: {
           customerId_projectId_startDate: {
             customerId: customerIds[mapping.customerIndex],
@@ -244,7 +313,7 @@ async function seedCustomerProjects(customerIds: string[], projectIds: string[])
           startDate: new Date('2024-01-01'),
           isActive: true,
         },
-      });
+      }));
     }
     console.log(`  ✓ Customer ${mapping.customerIndex + 1} bound to ${mapping.projectIndices.length} projects`);
   }
@@ -254,9 +323,9 @@ async function seedInvoicesAndLineItems(customerIds: string[]) {
   console.log('Seeding invoice runs, invoices, and line items...');
 
   // Get the admin user to use as creator
-  const adminUser = await prisma.user.findFirst({
+  const adminUser = await withTransientSeedRetry(() => prisma.user.findFirst({
     where: { email: 'admin@sieger.com' },
-  });
+  }));
 
   if (!adminUser) {
     console.error('Admin user not found. Please run db:seed first.');
@@ -270,7 +339,7 @@ async function seedInvoicesAndLineItems(customerIds: string[]) {
     console.log(`\n  Creating invoices for ${month}...`);
 
     // Create invoice run
-    const invoiceRun = await prisma.invoiceRun.create({
+    const invoiceRun = await withTransientSeedRetry(() => prisma.invoiceRun.create({
       data: {
         billingMonth: month,
         status: InvoiceRunStatus.SUCCEEDED,
@@ -281,16 +350,16 @@ async function seedInvoicesAndLineItems(customerIds: string[]) {
         customerCount: customerIds.length,
         rowCount: customerIds.length * 15, // Approx line items
       },
-    });
+    }));
 
     console.log(`    ✓ Invoice Run: ${invoiceRun.id}`);
 
     // Create invoices for each customer
     let invoiceIndex = 0;
     for (const customerId of customerIds) {
-      const customer = await prisma.customer.findUnique({
+      const customer = await withTransientSeedRetry(() => prisma.customer.findUnique({
         where: { id: customerId },
-      });
+      }));
 
       // Generate invoice amounts
       const baseAmount = getRandomAmount(1500, 25000);
@@ -321,7 +390,7 @@ async function seedInvoicesAndLineItems(customerIds: string[]) {
         status = InvoiceStatus.DRAFT;
       }
 
-      const invoice = await prisma.invoice.create({
+      const invoice = await withTransientSeedRetry(() => prisma.invoice.create({
         data: {
           invoiceRunId: invoiceRun.id,
           customerId,
@@ -337,7 +406,7 @@ async function seedInvoicesAndLineItems(customerIds: string[]) {
           dueDate,
           paidAt,
         },
-      });
+      }));
 
       console.log(`    ✓ Invoice: ${invoice.invoiceNumber} (${status}) - $${totalAmount.toFixed(2)}`);
 
@@ -359,7 +428,7 @@ async function seedInvoicesAndLineItems(customerIds: string[]) {
 
           if (amount < 0.01) continue;
 
-          await prisma.invoiceLineItem.create({
+          await withTransientSeedRetry(() => prisma.invoiceLineItem.create({
             data: {
               invoiceId: invoice.id,
               lineNumber,
@@ -374,7 +443,7 @@ async function seedInvoicesAndLineItems(customerIds: string[]) {
                 region: 'us-central1',
               },
             },
-          });
+          }));
 
           remainingAmount -= amount;
           lineNumber++;
@@ -387,7 +456,7 @@ async function seedInvoicesAndLineItems(customerIds: string[]) {
 
       // Add remaining as a catch-all if needed
       if (remainingAmount > 10) {
-        await prisma.invoiceLineItem.create({
+        await withTransientSeedRetry(() => prisma.invoiceLineItem.create({
           data: {
             invoiceId: invoice.id,
             lineNumber,
@@ -400,26 +469,26 @@ async function seedInvoicesAndLineItems(customerIds: string[]) {
               serviceName: 'Other Services',
             },
           },
-        });
+        }));
       }
 
       invoiceIndex++;
     }
 
     // Update invoice run totals
-    const invoiceTotals = await prisma.invoice.aggregate({
+    const invoiceTotals = await withTransientSeedRetry(() => prisma.invoice.aggregate({
       where: { invoiceRunId: invoiceRun.id },
       _sum: { totalAmount: true },
       _count: true,
-    });
+    }));
 
-    await prisma.invoiceRun.update({
+    await withTransientSeedRetry(() => prisma.invoiceRun.update({
       where: { id: invoiceRun.id },
       data: {
         totalAmount: invoiceTotals._sum.totalAmount || 0,
         totalInvoices: invoiceTotals._count,
       },
-    });
+    }));
   }
 }
 
@@ -443,12 +512,12 @@ async function main() {
     console.log('========================================\n');
 
     // Summary
-    const customerCount = await prisma.customer.count();
-    const billingAccountCount = await prisma.billingAccount.count();
-    const projectCount = await prisma.project.count();
-    const invoiceRunCount = await prisma.invoiceRun.count();
-    const invoiceCount = await prisma.invoice.count();
-    const lineItemCount = await prisma.invoiceLineItem.count();
+    const customerCount = await withTransientSeedRetry(() => prisma.customer.count());
+    const billingAccountCount = await withTransientSeedRetry(() => prisma.billingAccount.count());
+    const projectCount = await withTransientSeedRetry(() => prisma.project.count());
+    const invoiceRunCount = await withTransientSeedRetry(() => prisma.invoiceRun.count());
+    const invoiceCount = await withTransientSeedRetry(() => prisma.invoice.count());
+    const lineItemCount = await withTransientSeedRetry(() => prisma.invoiceLineItem.count());
 
     console.log('Summary:');
     console.log(`  Customers: ${customerCount}`);

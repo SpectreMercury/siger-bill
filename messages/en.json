@@ -308,6 +308,7 @@
     "firstName": "First Name",
     "lastName": "Last Name",
     "email": "Email",
+    "roleLabel": "Roles",
     "roles": {
       "super_admin": "Super Admin",
       "super_admin_desc": "Complete system control with all permissions",
