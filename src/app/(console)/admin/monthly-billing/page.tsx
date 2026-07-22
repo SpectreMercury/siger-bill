@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { api, getAuthToken } from '@/lib/client/api';
+import { fetchAllPages } from '@/lib/client/pagination';
 import { Customer } from '@/lib/client/types';
 import { Alert } from '@/components/ui';
 import { Card } from '@/components/ui/shadcn/card';
@@ -66,6 +67,7 @@ export default function MonthlyBillingPage() {
 
   const [billingMonth, setBillingMonth] = useState(defaultBillingMonth());
   const [customerId, setCustomerId] = useState('all');
+  const [priceBasis, setPriceBasis] = useState<'STANDARD' | 'COST'>('STANDARD');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<BillingCell[][]>([]);
@@ -87,8 +89,7 @@ export default function MonthlyBillingPage() {
 
   const fetchCustomers = useCallback(async () => {
     try {
-      const response = await api.get<{ data: Customer[] }>('/customers?limit=1000');
-      setCustomers(response.data || []);
+      setCustomers(await fetchAllPages<Customer>('/customers'));
     } catch (err) {
       console.error('Failed to load customers:', err);
     }
@@ -102,6 +103,7 @@ export default function MonthlyBillingPage() {
       params.set('billingMonth', billingMonth);
       params.set('page', String(page));
       params.set('limit', String(limit));
+      params.set('priceBasis', priceBasis);
       if (selectedCustomerId) params.set('customerId', selectedCustomerId);
 
       const response = await api.get<MonthlyBillingResponse>(`/billing/monthly-lines?${params.toString()}`);
@@ -116,7 +118,7 @@ export default function MonthlyBillingPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [billingMonth, limit, page, selectedCustomerId, t]);
+  }, [billingMonth, limit, page, priceBasis, selectedCustomerId, t]);
 
   const syncWarningFromJob = useCallback((job: BillingSyncJob) => {
     if (!job.sourceConflicts || job.sourceConflicts.length === 0) return null;
@@ -180,6 +182,7 @@ export default function MonthlyBillingPage() {
     try {
       const params = new URLSearchParams();
       params.set('billingMonth', billingMonth);
+      params.set('priceBasis', priceBasis);
       if (selectedCustomerId) params.set('customerId', selectedCustomerId);
 
       const token = getAuthToken();
@@ -237,6 +240,7 @@ export default function MonthlyBillingPage() {
     try {
       const formData = new FormData();
       formData.set('billingMonth', billingMonth);
+      formData.set('priceBasis', priceBasis);
       if (selectedCustomerId) formData.set('customerId', selectedCustomerId);
       formData.set('file', file);
 
@@ -338,7 +342,7 @@ export default function MonthlyBillingPage() {
       )}
 
       <Card className="p-4">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-[180px_280px_auto] md:items-end">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-[180px_280px_240px_auto] md:items-end">
           <div className="space-y-1.5">
             <Label htmlFor="billingMonth">{t('billingMonth')}</Label>
             <Input
@@ -372,6 +376,28 @@ export default function MonthlyBillingPage() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t('priceBasis')}</Label>
+            <div className="grid grid-cols-2 rounded-md border bg-muted/30 p-1">
+              {(['STANDARD', 'COST'] as const).map((basis) => (
+                <button
+                  key={basis}
+                  type="button"
+                  onClick={() => {
+                    setPriceBasis(basis);
+                    setPage(1);
+                  }}
+                  className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                    priceBasis === basis
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {t(`priceBasisOptions.${basis}`)}
+                </button>
+              ))}
+            </div>
           </div>
           <Button variant="secondary" onClick={resetPageAndFetch} disabled={isLoading}>
             {isLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}

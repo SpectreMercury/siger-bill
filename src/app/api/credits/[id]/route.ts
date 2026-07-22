@@ -4,14 +4,16 @@
  * Individual credit management.
  *
  * GET   - Get credit details with ledger history
- * PATCH - Update credit (status, validTo, allowCarryOver, description)
+ * PATCH - Update credit configuration and balance
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { withPermission } from '@/lib/middleware';
 import { hasCustomerScope } from '@/lib/auth/context';
 import { logCreditUpdate } from '@/lib/audit';
+import { buildCreditUpdate } from '@/lib/credits/update';
 import {
   validateBody,
   updateCreditSchema,
@@ -21,7 +23,10 @@ import {
   notFound,
   forbidden,
   badRequest,
+  conflict,
 } from '@/lib/utils';
+
+class CreditUpdateConflictError extends Error {}
 
 /**
  * GET /api/credits/:id
@@ -136,11 +141,8 @@ export const GET = withPermission(
  * Update credit properties.
  * Requires credits:update permission and customer scope.
  *
- * Updateable fields:
- * - status: ACTIVE, EXPIRED, DEPLETED
- * - validTo: Extend or shorten validity period
- * - allowCarryOver: Toggle carry-over behavior
- * - description: Update description
+ * Monetary, validity, status, type, carry-over, description, and scope fields
+ * are editable. Every change is recorded in the audit log.
  */
 export const PATCH = withPermission(
   { resource: 'credits', action: 'update' },
@@ -170,14 +172,6 @@ export const PATCH = withPermission(
 
       const data = validation.data;
 
-      // Validate validTo if provided
-      if (data.validTo) {
-        const newValidTo = new Date(data.validTo);
-        if (newValidTo <= existingCredit.validFrom) {
-          return badRequest('validTo must be after validFrom');
-        }
-      }
-
       if (data.matchSkuGroupId) {
         const skuGroup = await prisma.skuGroup.findUnique({
           where: { id: data.matchSkuGroupId },
@@ -188,15 +182,9 @@ export const PATCH = withPermission(
         }
       }
 
-      // Build update object
-      const updateData: Record<string, unknown> = {};
-      if (data.status !== undefined) updateData.status = data.status;
-      if (data.validTo !== undefined) updateData.validTo = new Date(data.validTo);
-      if (data.allowCarryOver !== undefined) updateData.allowCarryOver = data.allowCarryOver;
-      if (data.description !== undefined) updateData.description = data.description;
-      if (data.matchSkuId !== undefined) updateData.matchSkuId = data.matchSkuId;
-      if (data.matchSkuGroupId !== undefined) updateData.matchSkuGroupId = data.matchSkuGroupId;
-      if (data.matchProjectId !== undefined) updateData.matchProjectId = data.matchProjectId;
+      const update = buildCreditUpdate(existingCredit, data);
+      if (!update.ok) return badRequest(update.error);
+      const { updateData, beforeData, afterData, balanceAdjustment } = update;
 
       // Nothing to update
       if (Object.keys(updateData).length === 0) {
@@ -212,6 +200,7 @@ export const PATCH = withPermission(
           validTo: existingCredit.validTo.toISOString().split('T')[0],
           allowCarryOver: existingCredit.allowCarryOver,
           status: existingCredit.status,
+          isActive: existingCredit.status === 'ACTIVE',
           sourceReference: existingCredit.sourceReference,
           description: existingCredit.description,
           matchSkuId: existingCredit.matchSkuId,
@@ -221,46 +210,42 @@ export const PATCH = withPermission(
         });
       }
 
-      // Update credit
-      const updatedCredit = await prisma.credit.update({
-        where: { id: creditId },
-        data: updateData,
+      const expectedUpdatedAt = new Date(data.expectedUpdatedAt);
+
+      // The balance update, immutable adjustment entry, and audit event either
+      // all commit or all roll back. updatedAt is the optimistic lock so a
+      // stale admin form cannot overwrite invoice consumption or another edit.
+      const updatedCredit = await prisma.$transaction(async (tx) => {
+        const updated = await tx.credit.updateMany({
+          where: {
+            id: creditId,
+            updatedAt: expectedUpdatedAt,
+          },
+          data: updateData as Prisma.CreditUpdateManyMutationInput,
+        });
+
+        if (updated.count !== 1) throw new CreditUpdateConflictError();
+
+        if (balanceAdjustment) {
+          await tx.creditBalanceAdjustment.create({
+            data: {
+              creditId,
+              amountDelta: new Prisma.Decimal(balanceAdjustment.amountDelta),
+              remainingBefore: new Prisma.Decimal(balanceAdjustment.remainingBefore),
+              remainingAfter: new Prisma.Decimal(balanceAdjustment.remainingAfter),
+              reason: balanceAdjustment.reason,
+              adjustedBy: context.auth.userId,
+            },
+          });
+        }
+
+        await logCreditUpdate(context, creditId, beforeData, afterData, {
+          db: tx,
+          strict: true,
+        });
+
+        return tx.credit.findUniqueOrThrow({ where: { id: creditId } });
       });
-
-      // Build before/after data for audit
-      const beforeData: Record<string, unknown> = {};
-      const afterData: Record<string, unknown> = {};
-      if (data.status !== undefined) {
-        beforeData.status = existingCredit.status;
-        afterData.status = updatedCredit.status;
-      }
-      if (data.validTo !== undefined) {
-        beforeData.validTo = existingCredit.validTo.toISOString().split('T')[0];
-        afterData.validTo = updatedCredit.validTo.toISOString().split('T')[0];
-      }
-      if (data.allowCarryOver !== undefined) {
-        beforeData.allowCarryOver = existingCredit.allowCarryOver;
-        afterData.allowCarryOver = updatedCredit.allowCarryOver;
-      }
-      if (data.description !== undefined) {
-        beforeData.description = existingCredit.description;
-        afterData.description = updatedCredit.description;
-      }
-      if (data.matchSkuId !== undefined) {
-        beforeData.matchSkuId = existingCredit.matchSkuId;
-        afterData.matchSkuId = updatedCredit.matchSkuId;
-      }
-      if (data.matchSkuGroupId !== undefined) {
-        beforeData.matchSkuGroupId = existingCredit.matchSkuGroupId;
-        afterData.matchSkuGroupId = updatedCredit.matchSkuGroupId;
-      }
-      if (data.matchProjectId !== undefined) {
-        beforeData.matchProjectId = existingCredit.matchProjectId;
-        afterData.matchProjectId = updatedCredit.matchProjectId;
-      }
-
-      // Audit log
-      await logCreditUpdate(context, creditId, beforeData, afterData);
 
       return success({
         id: updatedCredit.id,
@@ -274,6 +259,7 @@ export const PATCH = withPermission(
         validTo: updatedCredit.validTo.toISOString().split('T')[0],
         allowCarryOver: updatedCredit.allowCarryOver,
         status: updatedCredit.status,
+        isActive: updatedCredit.status === 'ACTIVE',
         sourceReference: updatedCredit.sourceReference,
         description: updatedCredit.description,
         matchSkuId: updatedCredit.matchSkuId,
@@ -283,6 +269,9 @@ export const PATCH = withPermission(
       });
 
     } catch (error) {
+      if (error instanceof CreditUpdateConflictError) {
+        return conflict('Credit changed after this form was opened. Refresh and review the latest balance before saving again.');
+      }
       console.error('Failed to update credit:', error);
       return serverError('Failed to update credit');
     }

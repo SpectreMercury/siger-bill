@@ -17,6 +17,7 @@ import {
   GcpBigQueryAdapterConfig,
   createLineItemsChecksum,
 } from './types';
+import { assertValidBigQueryPathPart } from '../bigquery-reference';
 
 // BigQuery types - defined locally to avoid requiring the package at compile time
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -126,6 +127,8 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
   private config: GcpBigQueryAdapterConfig;
 
   constructor(config: GcpBigQueryAdapterConfig) {
+    assertValidBigQueryPathPart(config.datasetId, 'dataset');
+    assertValidBigQueryPathPart(config.tableName, 'table');
     this.config = config;
   }
 
@@ -206,6 +209,10 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
         source: `${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}`,
         sourceKey: this.buildSourceKey(accountIds || this.config.billingAccountIds),
         jobProjectId: this.config.jobProjectId || this.config.projectId,
+        aggregation: {
+          level: 'MONTHLY_PROJECT_SKU',
+          description: 'Costs, usage, and credits are aggregated in BigQuery before ingestion.',
+        },
         dataRange: {
           start: `${month}-01`,
           end: this.getMonthEndDate(month),
@@ -257,35 +264,72 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
 
     let accountFilter = '';
     if (billingAccountIds && billingAccountIds.length > 0) {
-      accountFilter = 'AND billing_account_id IN UNNEST(@billingAccountIds)';
+      accountFilter = 'AND billing.billing_account_id IN UNNEST(@billingAccountIds)';
       queryParams.billingAccountIds = billingAccountIds;
     }
 
     const query = `
       SELECT
-        billing_account_id,
-        service,
-        sku,
-        usage_start_time,
-        usage_end_time,
-        project,
-        labels,
-        system_labels,
-        location,
-        resource,
-        usage,
-        cost,
-        cost_at_list,
-        currency,
-        currency_conversion_rate,
-        credits,
-        invoice,
-        cost_type,
-        transaction_type,
-        adjustment_info
-      FROM \`${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}\`
-      WHERE invoice.month = @invoiceMonth
+        billing.billing_account_id,
+        ANY_VALUE(billing.service) AS service,
+        ANY_VALUE(billing.sku) AS sku,
+        MIN(billing.usage_start_time) AS usage_start_time,
+        MAX(billing.usage_end_time) AS usage_end_time,
+        ANY_VALUE(billing.project) AS project,
+        ANY_VALUE(billing.labels) AS labels,
+        ANY_VALUE(billing.system_labels) AS system_labels,
+        ANY_VALUE(billing.location) AS location,
+        CAST(NULL AS STRUCT<name STRING, global_name STRING>) AS resource,
+        STRUCT(
+          SUM(billing.usage.amount) AS amount,
+          ANY_VALUE(billing.usage.unit) AS unit,
+          SUM(billing.usage.amount_in_pricing_units) AS amount_in_pricing_units,
+          ANY_VALUE(billing.usage.pricing_unit) AS pricing_unit
+        ) AS usage,
+        SUM(billing.cost) AS cost,
+        SUM(billing.cost_at_list) AS cost_at_list,
+        billing.currency,
+        billing.currency_conversion_rate,
+        IF(
+          SUM((
+            SELECT COALESCE(SUM(credit.amount), 0)
+            FROM UNNEST(IFNULL(billing.credits, [])) AS credit
+          )) = 0,
+          ARRAY<STRUCT<name STRING, amount FLOAT64, full_name STRING, id STRING, type STRING>>[],
+          [STRUCT(
+            'Aggregated credits' AS name,
+            CAST(SUM((
+              SELECT COALESCE(SUM(credit.amount), 0)
+              FROM UNNEST(IFNULL(billing.credits, [])) AS credit
+            )) AS FLOAT64) AS amount,
+            'Aggregated credits for monthly project/SKU group' AS full_name,
+            'aggregated' AS id,
+            'AGGREGATED' AS type
+          )]
+        ) AS credits,
+        STRUCT(billing.invoice.month AS month) AS invoice,
+        billing.cost_type,
+        billing.transaction_type,
+        ANY_VALUE(billing.adjustment_info) AS adjustment_info
+      FROM \`${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}\` AS billing
+      WHERE billing.invoice.month = @invoiceMonth
         ${accountFilter}
+      GROUP BY
+        billing.billing_account_id,
+        billing.project.id,
+        billing.service.id,
+        billing.service.description,
+        billing.sku.id,
+        billing.sku.description,
+        billing.currency,
+        billing.currency_conversion_rate,
+        billing.invoice.month,
+        billing.cost_type,
+        billing.transaction_type,
+        billing.location.region,
+        billing.usage.unit,
+        billing.usage.pricing_unit,
+        TO_JSON_STRING(billing.adjustment_info)
       ORDER BY usage_start_time
     `;
 

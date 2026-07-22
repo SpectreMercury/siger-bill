@@ -2,16 +2,21 @@ import * as XLSX from 'xlsx';
 import {
   BillingProvider,
   BillingSourceType,
+  PricingBasis,
   Prisma,
 } from '@prisma/client';
 import { createHash } from 'crypto';
 import { prisma } from '@/lib/db';
 import {
+  STANDARD_TEMPLATE_HEADERS,
   TEMPLATE_HEADERS,
+  resolveMonthlyTemplateHeaders,
   type BillingTemplateBuildResult,
-  type BillingTemplateCell,
+  type BillingTemplateHeaders,
   type BillingTemplateRow,
 } from './monthly-template';
+import { formatMonthlyNumericCell } from './monthly-template-calculation';
+import { ACTIVE_PRICING_LIST_ORDER } from '@/lib/pricing/active-list';
 
 type RowRecord = Record<string, unknown>;
 
@@ -47,6 +52,7 @@ export type ParsedBillingOverrideLine = {
 export type BillingOverrideSummary = {
   id: string;
   billingMonth: string;
+  priceBasis: PricingBasis;
   customerId: string | null;
   billingIngestionBatchId: string;
   sourceFilename: string;
@@ -113,23 +119,24 @@ function formatDate(date: Date): string {
   return date.toISOString().split('T')[0];
 }
 
-function formatDecimal(value: Prisma.Decimal | null): string | null {
-  if (value == null) return null;
-  const fixed = value.toDecimalPlaces(10).toFixed(10);
-  return fixed.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+function formatDecimal(value: Prisma.Decimal | null): number | null {
+  return formatMonthlyNumericCell(value);
 }
 
-function headerRow(): BillingTemplateRow {
-  return [...TEMPLATE_HEADERS];
+function headerRow(headers: BillingTemplateHeaders): BillingTemplateRow {
+  return [...headers];
 }
 
-function buildHeaderIndex(headers: unknown[]): Map<string, number> {
+function buildHeaderIndex(
+  headers: unknown[],
+  requiredHeaders: BillingTemplateHeaders
+): Map<string, number> {
   const headerIndex = new Map<string, number>();
   headers.forEach((value, index) => {
     const text = normalizeCell(value);
     if (text != null) headerIndex.set(String(text).trim(), index);
   });
-  for (const header of TEMPLATE_HEADERS) {
+  for (const header of requiredHeaders) {
     if (!headerIndex.has(header)) {
       throw new Error(`Missing required header: ${header}`);
     }
@@ -137,15 +144,52 @@ function buildHeaderIndex(headers: unknown[]): Map<string, number> {
   return headerIndex;
 }
 
-function rowToRecord(row: unknown[], headerIndex: Map<string, number>): RowRecord {
+function rowToRecord(
+  row: unknown[],
+  headerIndex: Map<string, number>,
+  headers: BillingTemplateHeaders
+): RowRecord {
   const record: RowRecord = {};
-  for (const header of TEMPLATE_HEADERS) {
+  for (const header of headers) {
     record[header] = row[headerIndex.get(header)!];
   }
   return record;
 }
 
+function detectTemplateHeaders(headers: unknown[]): BillingTemplateHeaders {
+  const normalized = new Set(headers.map(normalizeCell).filter((value) => value != null).map(String));
+  const hasStandardMarker = normalized.has('合同优惠金额') || normalized.has('优惠后金额');
+  const templateHeaders = hasStandardMarker ? STANDARD_TEMPLATE_HEADERS : TEMPLATE_HEADERS;
+  for (const header of templateHeaders) {
+    if (!normalized.has(header)) throw new Error(`Missing required header: ${header}`);
+  }
+  return templateHeaders;
+}
+
+function readBillingOverrideWorkbookRows(buffer: Buffer): unknown[][] {
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  const firstSheet = workbook.SheetNames[0];
+  if (!firstSheet) throw new Error('Workbook has no sheets');
+
+  return XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[firstSheet], {
+    header: 1,
+    raw: true,
+    defval: null,
+  });
+}
+
+export function detectBillingOverrideWorkbookBasis(buffer: Buffer): PricingBasis {
+  const rows = readBillingOverrideWorkbookRows(buffer);
+  if (rows.length === 0) throw new Error('Workbook has no header row');
+  return detectTemplateHeaders(rows[0]) === STANDARD_TEMPLATE_HEADERS
+    ? PricingBasis.STANDARD
+    : PricingBasis.COST;
+}
+
 async function loadCustomerResolver(forcedCustomerId?: string) {
+  if (forcedCustomerId) {
+    return (): string => forcedCustomerId;
+  }
   const customers = await prisma.customer.findMany({
     select: { id: true, name: true, externalId: true },
   });
@@ -163,7 +207,6 @@ async function loadCustomerResolver(forcedCustomerId?: string) {
   }
 
   return (projectId: string | null, companyName: string | null): string | null => {
-    if (forcedCustomerId) return forcedCustomerId;
     if (projectId && byProjectId.has(projectId)) return byProjectId.get(projectId)!;
     if (companyName) return byName.get(companyName.trim().toLowerCase()) ?? null;
     return null;
@@ -172,38 +215,53 @@ async function loadCustomerResolver(forcedCustomerId?: string) {
 
 export async function parseBillingOverrideWorkbook(
   buffer: Buffer,
-  options: { customerId?: string }
+  options: { customerId?: string; priceBasis?: 'STANDARD' | 'COST' }
 ): Promise<ParsedBillingOverrideLine[]> {
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-  const firstSheet = workbook.SheetNames[0];
-  if (!firstSheet) throw new Error('Workbook has no sheets');
-
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[firstSheet], {
-    header: 1,
-    raw: true,
-    defval: null,
-  });
+  const rows = readBillingOverrideWorkbookRows(buffer);
 
   if (rows.length < 2) throw new Error('Workbook has no data rows');
-  const headerIndex = buildHeaderIndex(rows[0]);
+  const templateHeaders = detectTemplateHeaders(rows[0]);
+  const isStandard = templateHeaders === STANDARD_TEMPLATE_HEADERS;
+  const detectedPriceBasis = isStandard ? 'STANDARD' : 'COST';
+  if (options.priceBasis && options.priceBasis !== detectedPriceBasis) {
+    const selectedLabel = options.priceBasis === 'STANDARD' ? '列表价' : 'Cost';
+    const uploadedLabel = detectedPriceBasis === 'STANDARD' ? '列表价' : 'Cost';
+    throw new Error(`选择的是${selectedLabel}模板，但上传文件是 ${uploadedLabel} 模板`);
+  }
+  const headerIndex = buildHeaderIndex(rows[0], templateHeaders);
   const resolveCustomerId = await loadCustomerResolver(options.customerId);
   const parsed: ParsedBillingOverrideLine[] = [];
 
   for (let rowIndex = 1; rowIndex < rows.length; rowIndex++) {
     const row = rows[rowIndex];
     if (!row || row.every((value) => normalizeCell(value) == null)) continue;
-    const record = rowToRecord(row, headerIndex);
+    const record = rowToRecord(row, headerIndex, templateHeaders);
 
     const companyName = stringCell(record, '公司名称');
     const projectId = stringCell(record, '项目ID');
     const customerId = resolveCustomerId(projectId, companyName);
     const usageAmount = decimalCell(record, '使用量', true)!;
-    const resellerCost = decimalCell(record, '经销商价', true)!;
+    const listCost = decimalCell(record, '列表价');
     const creditAmount = decimalCell(record, '代金券减免') ?? new Prisma.Decimal(0);
-    const costAfterCredit = decimalCell(record, '代金券减免后金额');
+    const finalAmount = decimalCell(record, '最终付款金额');
+    const discountedAmount = isStandard
+      ? decimalCell(record, '优惠后金额') ?? finalAmount?.sub(creditAmount) ?? null
+      : null;
+    const resellerCost = isStandard
+      ? discountedAmount ?? listCost ?? new Prisma.Decimal(0)
+      : decimalCell(record, '经销商价', true)!;
+    const costAfterCredit = isStandard
+      ? finalAmount ?? discountedAmount?.add(creditAmount) ?? null
+      : decimalCell(record, '代金券减免后金额');
+    const cnyAmount = decimalCell(record, '折后总金额(CNY,不含税)');
+    const currencyConversionRate = isStandard
+      ? finalAmount != null && !finalAmount.isZero() && cnyAmount != null
+        ? cnyAmount.div(finalAmount)
+        : null
+      : decimalCell(record, '汇率');
 
     const rowData = Object.fromEntries(
-      TEMPLATE_HEADERS.map((header) => [header, normalizeCell(record[header])])
+      templateHeaders.map((header) => [header, normalizeCell(record[header])])
     ) as Record<string, string | number | null>;
 
     parsed.push({
@@ -211,7 +269,7 @@ export async function parseBillingOverrideWorkbook(
       customerId,
       companyName,
       billingAccountId: stringCell(record, '账单账号ID', true)!,
-      billingAccountName: stringCell(record, '账单名称'),
+      billingAccountName: stringCell(record, isStandard ? '标签' : '账单名称'),
       projectName: stringCell(record, '项目名称'),
       projectId,
       serviceDescription: stringCell(record, '服务描述'),
@@ -223,15 +281,15 @@ export async function parseBillingOverrideWorkbook(
       usageAmount,
       usageUnit: stringCell(record, '用量单位', true)!,
       currency: stringCell(record, '费用单位') ?? 'USD',
-      listCost: decimalCell(record, '列表价'),
+      listCost,
       resellerCost,
       creditAmount,
       costAfterCredit,
       discountPrice: stringCell(record, 'Discount/Price'),
-      finalAmount: decimalCell(record, '最终付款金额'),
-      cnyAmount: decimalCell(record, '折后总金额(CNY,不含税)'),
+      finalAmount,
+      cnyAmount,
       transactionType: stringCell(record, 'transaction_type'),
-      currencyConversionRate: decimalCell(record, '汇率'),
+      currencyConversionRate,
       rowData,
     });
   }
@@ -258,6 +316,7 @@ export async function findActiveBillingMonthlyOverride(
   return {
     id: override.id,
     billingMonth: override.billingMonth,
+    priceBasis: override.priceBasis,
     customerId: override.customerId,
     billingIngestionBatchId: override.billingIngestionBatchId,
     sourceFilename: override.sourceFilename,
@@ -305,7 +364,7 @@ function overrideLineToTemplateRow(line: {
     line.skuId,
     formatDate(line.usageStartTime),
     formatDate(line.usageEndTime),
-    formatDecimal(line.usageAmount) as BillingTemplateCell,
+    formatDecimal(line.usageAmount),
     line.usageUnit,
     line.currency,
     formatDecimal(line.listCost),
@@ -320,41 +379,101 @@ function overrideLineToTemplateRow(line: {
   ];
 }
 
+export function restoreBillingOverrideRow(
+  rowData: Prisma.JsonValue,
+  headers: BillingTemplateHeaders
+): BillingTemplateRow {
+  if (!rowData || typeof rowData !== 'object' || Array.isArray(rowData)) {
+    return headers.map(() => null);
+  }
+  const record = rowData as Record<string, Prisma.JsonValue>;
+  return headers.map((header) => {
+    const value = record[header];
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'number' || typeof value === 'string') return value;
+    return String(value);
+  });
+}
+
 export async function buildOverrideTemplateRowsForMonth(options: {
   billingMonth: string;
   customerId?: string;
+  customerIds?: string[];
   page?: number;
   limit?: number;
+  all?: boolean;
 }): Promise<BillingTemplateBuildResult | null> {
   const active = await findActiveBillingMonthlyOverride(options.billingMonth, options.customerId);
   if (!active) return null;
 
   const page = Math.max(options.page ?? 1, 1);
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 5000);
+  const targetCustomerIds = options.customerId
+    ? [options.customerId]
+    : options.customerIds
+      ? options.customerIds
+      : (await prisma.customer.findMany({ select: { id: true } })).map((customer) => customer.id);
+  const activePricingLists = targetCustomerIds.length > 0
+    ? await prisma.pricingList.findMany({
+        where: { customerId: { in: targetCustomerIds }, status: 'ACTIVE' },
+        orderBy: ACTIVE_PRICING_LIST_ORDER,
+        select: { customerId: true, billingAccountIds: true },
+      })
+    : [];
+  const pricingScopeByCustomer = new Map<string, string[]>();
+  for (const pricingList of activePricingLists) {
+    if (!pricingScopeByCustomer.has(pricingList.customerId)) {
+      pricingScopeByCustomer.set(pricingList.customerId, pricingList.billingAccountIds);
+    }
+  }
+  const unrestrictedCustomerIds = targetCustomerIds.filter(
+    (customerId) => (pricingScopeByCustomer.get(customerId)?.length ?? 0) === 0
+  );
+  const restrictedCustomerClauses = targetCustomerIds.flatMap((customerId) => {
+    const billingAccountIds = pricingScopeByCustomer.get(customerId) ?? [];
+    return billingAccountIds.length > 0
+      ? [{ customerId, billingAccountId: { in: billingAccountIds } }]
+      : [];
+  });
+
   const where: Prisma.BillingMonthlyOverrideLineWhereInput = {
     overrideId: active.id,
-    ...(options.customerId ? { customerId: options.customerId } : {}),
+    OR: [
+      ...(unrestrictedCustomerIds.length > 0
+        ? [{ customerId: { in: unrestrictedCustomerIds } }]
+        : []),
+      ...restrictedCustomerClauses,
+      ...(!options.customerId && !options.customerIds ? [{ customerId: null }] : []),
+    ],
   };
 
   const lines = await prisma.billingMonthlyOverrideLine.findMany({
     where,
-    skip: (page - 1) * limit,
-    take: limit,
+    ...(options.all ? {} : {
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     orderBy: { rowNumber: 'asc' },
   });
   const total = await prisma.billingMonthlyOverrideLine.count({ where });
+  const resultLimit = options.all ? Math.max(total, 1) : limit;
+  const headers = resolveMonthlyTemplateHeaders(active.priceBasis);
+  const dataRows = active.priceBasis === PricingBasis.STANDARD
+    ? lines.map((line) => restoreBillingOverrideRow(line.rowData, headers))
+    : lines.map(overrideLineToTemplateRow);
 
   return {
-    rows: [headerRow(), ...lines.map(overrideLineToTemplateRow)],
+    headers,
+    rows: [headerRow(headers), ...dataRows],
     total,
     page,
-    limit,
-    totalPages: Math.ceil(total / limit),
+    limit: resultLimit,
+    totalPages: Math.ceil(total / resultLimit),
     activeOverride: {
       id: active.id,
       sourceFilename: active.sourceFilename,
       uploadedAt: active.uploadedAt,
-      rowCount: active.rowCount,
+      rowCount: total,
     },
   };
 }
@@ -365,9 +484,14 @@ export async function createBillingMonthlyOverride(params: {
   sourceFilename: string;
   fileBuffer: Buffer;
   uploadedBy: string;
+  priceBasis?: 'STANDARD' | 'COST';
 }): Promise<BillingOverrideSummary> {
   const sourceFileHash = createHash('sha256').update(params.fileBuffer).digest('hex');
-  const lines = await parseBillingOverrideWorkbook(params.fileBuffer, { customerId: params.customerId });
+  const detectedPriceBasis = detectBillingOverrideWorkbookBasis(params.fileBuffer);
+  const lines = await parseBillingOverrideWorkbook(params.fileBuffer, {
+    customerId: params.customerId,
+    priceBasis: params.priceBasis,
+  });
 
   const created = await prisma.$transaction(async (tx) => {
     await tx.billingMonthlyOverride.updateMany({
@@ -393,6 +517,7 @@ export async function createBillingMonthlyOverride(params: {
           source: 'monthly_billing_override',
           sourceFilename: params.sourceFilename,
           customerId: params.customerId ?? null,
+          priceBasis: detectedPriceBasis,
         } as Prisma.InputJsonValue,
         createdBy: params.uploadedBy,
       },
@@ -401,6 +526,7 @@ export async function createBillingMonthlyOverride(params: {
     const override = await tx.billingMonthlyOverride.create({
       data: {
         billingMonth: params.billingMonth,
+        priceBasis: detectedPriceBasis,
         customerId: params.customerId ?? null,
         billingIngestionBatchId: batch.id,
         sourceFilename: params.sourceFilename,
@@ -481,6 +607,7 @@ export async function createBillingMonthlyOverride(params: {
   return {
     id: created.override.id,
     billingMonth: created.override.billingMonth,
+    priceBasis: created.override.priceBasis,
     customerId: created.override.customerId,
     billingIngestionBatchId: created.batchId,
     sourceFilename: created.override.sourceFilename,

@@ -8,11 +8,12 @@
  * customer ↔ project binding lives in the customer detail page / list drawer.
  */
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { ColumnDef } from '@tanstack/react-table';
-import { api } from '@/lib/client/api';
-import { PaginatedResponse, Customer } from '@/lib/client/types';
+import { api, getAuthToken } from '@/lib/client/api';
+import { fetchAllPages } from '@/lib/client/pagination';
+import { Customer } from '@/lib/client/types';
 import { DataTable, Alert } from '@/components/ui';
 import { Card } from '@/components/ui/shadcn/card';
 import { Badge } from '@/components/ui/shadcn/badge';
@@ -28,7 +29,7 @@ import {
 } from '@/components/ui/shadcn/select';
 import { Modal } from '@/components/ui/Modal';
 import { Can } from '@/components/auth';
-import { Plus, Pencil, Trash2, Check, X, Filter } from 'lucide-react';
+import { Plus, Pencil, Trash2, Check, X, Filter, Download, Upload, Loader2 } from 'lucide-react';
 import { PROJECT_NAME_OPTIONS } from '@/lib/constants/project-names';
 
 // ---------------------------------------------------------------------------
@@ -53,7 +54,14 @@ interface ProjectBillingConfig {
   projectId: string;
   name: string | null;
   billable: boolean;
+  chargeType: ChargeType;
   billingAccount: BillingAccountOption | null;
+  boundCustomers: Array<{
+    customerId: string;
+    customerName: string;
+    startDate: string | null;
+    endDate: string | null;
+  }>;
   createdBy: Operator | null;
   updatedBy: Operator | null;
   createdAt: string;
@@ -63,11 +71,21 @@ interface ProjectBillingConfig {
 interface FormData {
   projectId: string;
   name: string;
-  billable: boolean;
+  chargeType: ChargeType;
   billingAccountId: string;
+  customerId: string;
 }
 
-const emptyForm = (): FormData => ({ projectId: '', name: '', billable: true, billingAccountId: '' });
+type ChargeType = 'BILLABLE' | 'NON_BILLABLE' | 'CUD' | 'POC' | 'STARTUP';
+const CHARGE_TYPES: ChargeType[] = ['BILLABLE', 'NON_BILLABLE', 'CUD', 'POC', 'STARTUP'];
+
+const emptyForm = (): FormData => ({
+  projectId: '',
+  name: '',
+  chargeType: 'BILLABLE',
+  billingAccountId: '',
+  customerId: '',
+});
 
 function operatorLabel(op: Operator | null): string {
   if (!op) return '—';
@@ -88,10 +106,14 @@ export default function ProjectBillingConfigsPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<ProjectBillingConfig | null>(null);
   const [formData, setFormData] = useState<FormData>(emptyForm());
+  const [formCustomerSearchQuery, setFormCustomerSearchQuery] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -102,6 +124,7 @@ export default function ProjectBillingConfigsPage() {
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<string[]>([]);
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
+  const [chargeTypeFilter, setChargeTypeFilter] = useState<'all' | ChargeType>('all');
 
   const filteredCustomers = useMemo(() => {
     const q = customerSearchQuery.trim().toLowerCase();
@@ -111,6 +134,15 @@ export default function ProjectBillingConfigsPage() {
       (c.externalId?.toLowerCase().includes(q) ?? false)
     );
   }, [customers, customerSearchQuery]);
+
+  const filteredFormCustomers = useMemo(() => {
+    const query = formCustomerSearchQuery.trim().toLowerCase();
+    if (!query) return customers;
+    return customers.filter((customer) => (
+      customer.name.toLowerCase().includes(query)
+      || (customer.externalId?.toLowerCase().includes(query) ?? false)
+    ));
+  }, [customers, formCustomerSearchQuery]);
 
   const toggleCustomer = (id: string) => {
     setSelectedCustomerIds((prev) =>
@@ -129,25 +161,28 @@ export default function ProjectBillingConfigsPage() {
     setError(null);
     try {
       // Configs: include customer filter if any selected
-      const configsUrl = selectedCustomerIds.length > 0
-        ? `/project-billing-configs?limit=200&customerIds=${selectedCustomerIds.join(',')}`
-        : '/project-billing-configs?limit=200';
+      const params = new URLSearchParams();
+      if (selectedCustomerIds.length > 0) {
+        params.set('customerIds', selectedCustomerIds.join(','));
+      }
+      if (chargeTypeFilter !== 'all') params.set('chargeType', chargeTypeFilter);
+      const configsUrl = `/project-billing-configs?${params.toString()}`;
 
       const [configsRes, baRes, customersRes] = await Promise.all([
-        api.get<PaginatedResponse<ProjectBillingConfig>>(configsUrl),
-        api.get<PaginatedResponse<BillingAccountOption>>('/billing-accounts?limit=200'),
-        api.get<PaginatedResponse<Customer>>('/customers?limit=500'),
+        fetchAllPages<ProjectBillingConfig>(configsUrl),
+        fetchAllPages<BillingAccountOption>('/billing-accounts'),
+        fetchAllPages<Customer>('/customers'),
       ]);
-      setConfigs(configsRes.data || []);
-      setBillingAccounts(baRes.data || []);
-      setCustomers(customersRes.data || []);
+      setConfigs(configsRes);
+      setBillingAccounts(baRes);
+      setCustomers(customersRes);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : t('loadFailed'));
     } finally {
       setIsLoading(false);
     }
-  }, [t, selectedCustomerIds]);
+  }, [t, selectedCustomerIds, chargeTypeFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -170,14 +205,26 @@ export default function ProjectBillingConfigsPage() {
         cell: ({ row }) => row.original.name || <span className="text-muted-foreground">—</span>,
       },
       {
-        accessorKey: 'billable',
+        id: 'customer',
+        header: t('customer'),
+        cell: ({ row }) => row.original.boundCustomers.length > 0 ? (
+          <div className="flex max-w-[260px] flex-wrap gap-1">
+            {row.original.boundCustomers.map((customer) => (
+              <Badge key={customer.customerId} variant="secondary" className="font-normal">
+                {customer.customerName}
+              </Badge>
+            ))}
+          </div>
+        ) : <span className="text-muted-foreground">—</span>,
+      },
+      {
+        accessorKey: 'chargeType',
         header: t('billable'),
-        cell: ({ row }) =>
-          row.original.billable ? (
-            <Badge variant="default">{t('billableYes')}</Badge>
-          ) : (
-            <Badge variant="outline" className="text-muted-foreground">{t('billableNo')}</Badge>
-          ),
+        cell: ({ row }) => (
+          <Badge variant={row.original.chargeType === 'BILLABLE' ? 'default' : 'outline'}>
+            {t(`chargeTypes.${row.original.chargeType}`)}
+          </Badge>
+        ),
       },
       {
         accessorKey: 'billingAccount',
@@ -231,6 +278,7 @@ export default function ProjectBillingConfigsPage() {
   const openCreate = () => {
     setEditing(null);
     setFormData(emptyForm());
+    setFormCustomerSearchQuery('');
     setShowModal(true);
   };
 
@@ -239,9 +287,11 @@ export default function ProjectBillingConfigsPage() {
     setFormData({
       projectId: row.projectId,
       name: row.name ?? '',
-      billable: row.billable,
+      chargeType: row.chargeType,
       billingAccountId: row.billingAccount?.id ?? '',
+      customerId: row.boundCustomers[0]?.customerId ?? '',
     });
+    setFormCustomerSearchQuery('');
     setShowModal(true);
   };
 
@@ -257,8 +307,9 @@ export default function ProjectBillingConfigsPage() {
       const payload = {
         projectId: formData.projectId.trim(),
         name: formData.name.trim() || null,
-        billable: formData.billable,
+        chargeType: formData.chargeType,
         billingAccountId: formData.billingAccountId || null,
+        customerId: formData.customerId || null,
       };
       if (editing) {
         await api.put(`/project-billing-configs/${editing.id}`, payload);
@@ -293,6 +344,57 @@ export default function ProjectBillingConfigsPage() {
     }
   };
 
+  const handleDownloadTemplate = async () => {
+    setError(null);
+    try {
+      const token = getAuthToken();
+      const response = await fetch('/api/project-billing-configs/template', {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!response.ok) throw new Error(t('templateDownloadFailed'));
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'project-billing-config-template.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('templateDownloadFailed'));
+    }
+  };
+
+  const handleImport = async (file: File | null) => {
+    if (!file) return;
+    setIsImporting(true);
+    setError(null);
+    setImportMessage(null);
+    try {
+      const form = new window.FormData();
+      form.set('file', file);
+      const token = getAuthToken();
+      const response = await fetch('/api/project-billing-configs/import', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: form,
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error || t('importFailed'));
+      setImportMessage(t('importSuccess', {
+        created: body.createdCount ?? 0,
+        updated: body.updatedCount ?? 0,
+      }));
+      await fetchData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('importFailed'));
+    } finally {
+      setIsImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   // -------------------------------------------------------------------------
 
   return (
@@ -302,16 +404,42 @@ export default function ProjectBillingConfigsPage() {
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t('subtitle')}</p>
         </div>
-        <Can resource="project_billing_configs" action="create">
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-2" />
-            {t('actions.create')}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={handleDownloadTemplate}>
+            <Download className="h-4 w-4 mr-2" />
+            {t('actions.downloadTemplate')}
           </Button>
-        </Can>
+          <Can resource="project_billing_configs" action="create">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx"
+              className="hidden"
+              onChange={(event) => handleImport(event.target.files?.[0] ?? null)}
+            />
+            <Button
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isImporting}
+            >
+              {isImporting
+                ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                : <Upload className="h-4 w-4 mr-2" />}
+              {t('actions.import')}
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus className="h-4 w-4 mr-2" />
+              {t('actions.create')}
+            </Button>
+          </Can>
+        </div>
       </div>
 
       {error && (
         <Alert variant="error" onClose={() => setError(null)}>{error}</Alert>
+      )}
+      {importMessage && (
+        <Alert variant="success" onClose={() => setImportMessage(null)}>{importMessage}</Alert>
       )}
 
       {/* Filter bar */}
@@ -354,17 +482,18 @@ export default function ProjectBillingConfigsPage() {
           )}
 
           {/* Customer searchable dropdown */}
-          <div className="relative max-w-md">
-            <Input
-              type="text"
-              placeholder={t('filters.customerSearchPlaceholder')}
-              value={customerSearchQuery}
-              onChange={(e) => { setCustomerSearchQuery(e.target.value); setCustomerDropdownOpen(true); }}
-              onFocus={() => setCustomerDropdownOpen(true)}
-              onBlur={() => setTimeout(() => setCustomerDropdownOpen(false), 150)}
-            />
-            {customerDropdownOpen && (
-              <div className="absolute z-10 top-full left-0 right-0 mt-1 max-h-64 overflow-auto rounded-md border bg-popover shadow-md">
+          <div className="grid gap-3 md:grid-cols-[minmax(280px,1fr)_240px]">
+            <div className="relative max-w-md">
+              <Input
+                type="text"
+                placeholder={t('filters.customerSearchPlaceholder')}
+                value={customerSearchQuery}
+                onChange={(e) => { setCustomerSearchQuery(e.target.value); setCustomerDropdownOpen(true); }}
+                onFocus={() => setCustomerDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setCustomerDropdownOpen(false), 150)}
+              />
+              {customerDropdownOpen && (
+                <div className="absolute z-10 top-full left-0 right-0 mt-1 max-h-64 overflow-auto rounded-md border bg-popover shadow-md">
                 {filteredCustomers.length === 0 ? (
                   <div className="px-3 py-2 text-sm text-muted-foreground">
                     {t('filters.noCustomers')}
@@ -388,8 +517,25 @@ export default function ProjectBillingConfigsPage() {
                     );
                   })
                 )}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
+            <Select
+              value={chargeTypeFilter}
+              onValueChange={(value: 'all' | ChargeType) => setChargeTypeFilter(value)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={t('filters.chargeType')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('filters.allChargeTypes')}</SelectItem>
+                {CHARGE_TYPES.map((chargeType) => (
+                  <SelectItem key={chargeType} value={chargeType}>
+                    {t(`chargeTypes.${chargeType}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <p className="text-xs text-muted-foreground">
             {t('filters.customerFilterHint')}
@@ -411,7 +557,7 @@ export default function ProjectBillingConfigsPage() {
 
       <Modal
         isOpen={showModal}
-        onClose={() => { setShowModal(false); setEditing(null); }}
+        onClose={() => { setShowModal(false); setEditing(null); setFormCustomerSearchQuery(''); }}
         title={editing ? t('modal.editTitle') : t('modal.createTitle')}
         size="md"
       >
@@ -450,6 +596,45 @@ export default function ProjectBillingConfigsPage() {
           </div>
 
           <div className="space-y-2">
+            <Label htmlFor="customerId">{t('customer')}</Label>
+            <Input
+              id="customerId"
+              value={formCustomerSearchQuery}
+              onChange={(event) => setFormCustomerSearchQuery(event.target.value)}
+              placeholder={t('customerSearchPlaceholder')}
+            />
+            <div className="max-h-44 overflow-y-auto rounded-md border p-1" role="listbox">
+              <button
+                type="button"
+                role="option"
+                aria-selected={!formData.customerId}
+                onClick={() => setFormData({ ...formData, customerId: '' })}
+                className={`w-full rounded px-2 py-1.5 text-left text-sm ${
+                  !formData.customerId ? 'bg-primary/10 text-primary' : 'hover:bg-muted'
+                }`}
+              >
+                {t('noCustomer')}
+              </button>
+              {filteredFormCustomers.map((customer) => (
+                <button
+                  key={customer.id}
+                  type="button"
+                  role="option"
+                  aria-selected={formData.customerId === customer.id}
+                  onClick={() => setFormData({ ...formData, customerId: customer.id })}
+                  className={`w-full rounded px-2 py-1.5 text-left text-sm ${
+                    formData.customerId === customer.id
+                      ? 'bg-primary/10 text-primary'
+                      : 'hover:bg-muted'
+                  }`}
+                >
+                  {customer.name}{customer.externalId ? ` (${customer.externalId})` : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
             <Label htmlFor="billingAccount">{t('billingAccount')}</Label>
             <Select
               value={formData.billingAccountId || 'none'}
@@ -471,26 +656,21 @@ export default function ProjectBillingConfigsPage() {
 
           <div className="space-y-2">
             <Label htmlFor="billable">{t('billable')} *</Label>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="billable"
-                  checked={formData.billable === true}
-                  onChange={() => setFormData({ ...formData, billable: true })}
-                />
-                <span className="text-sm">{t('billableYes')}</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="billable"
-                  checked={formData.billable === false}
-                  onChange={() => setFormData({ ...formData, billable: false })}
-                />
-                <span className="text-sm">{t('billableNo')}</span>
-              </label>
-            </div>
+            <Select
+              value={formData.chargeType}
+              onValueChange={(chargeType: ChargeType) => setFormData({ ...formData, chargeType })}
+            >
+              <SelectTrigger id="billable">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CHARGE_TYPES.map((chargeType) => (
+                  <SelectItem key={chargeType} value={chargeType}>
+                    {t(`chargeTypes.${chargeType}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="flex justify-end gap-3 pt-2">

@@ -12,10 +12,16 @@ import { withAuthParams } from '@/lib/middleware';
 import { logUpdate, logDelete } from '@/lib/audit';
 import { success, notFound, serverError, badRequest } from '@/lib/utils';
 import { z } from 'zod';
+import { isValidBigQueryPathPart } from '@/lib/billing/bigquery-reference';
 
 function forbidden() {
   return NextResponse.json({ error: 'Super admin access required' }, { status: 403 });
 }
+
+const bigQueryPathPartSchema = z.string().trim().min(1).max(255).refine(
+  isValidBigQueryPathPart,
+  'Enter only the dataset or table name, without project/dataset prefixes or dots.'
+);
 
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
@@ -25,8 +31,8 @@ const updateSchema = z.object({
   credentials: z.record(z.string(), z.unknown()).optional(),
   billingProjectId: z.string().max(255).nullable().optional(),
   billingJobProjectId: z.string().max(255).nullable().optional(),
-  billingDatasetId: z.string().max(255).nullable().optional(),
-  billingTableName: z.string().max(255).nullable().optional(),
+  billingDatasetId: bigQueryPathPartSchema.nullable().optional(),
+  billingTableName: bigQueryPathPartSchema.nullable().optional(),
   billingAccountIds: z.array(z.string()).optional(),
   isDefault: z.boolean().optional(),
   isActive: z.boolean().optional(),

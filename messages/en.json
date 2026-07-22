@@ -559,6 +559,19 @@
     "title": "Pricing Lists",
     "subtitle": "Manage customer pricing rules",
     "name": "Name",
+    "priceBasis": "Billing Version",
+    "billingIds": "Billing ID Scope",
+    "allBillingIds": "All Billing IDs",
+    "allBillingIdsHint": "No account restriction; include every project for this customer",
+    "billingIdsHint": "Select one or more Billing IDs to include only project data from those accounts. No selection means all.",
+    "basis": {
+      "standard": "Standard (list price)",
+      "cost": "Cost (reseller cost)"
+    },
+    "basisHints": {
+      "standard": "Uses BigQuery cost_at_list as the pricing base; credit types enabled in Customer Credits still apply.",
+      "cost": "Uses BigQuery cost as the pricing base; credit types enabled in Customer Credits apply in the same way."
+    },
     "rules": "Rules",
     "rulesCount": "rules",
     "searchPlaceholder": "Search pricing lists...",
@@ -666,19 +679,28 @@
     "loadFailed": "Load failed",
     "saveFailed": "Save failed",
     "deleteFailed": "Delete failed",
+    "importFailed": "Import failed",
+    "templateDownloadFailed": "Template download failed",
+    "importSuccess": "Import complete: {created} created, {updated} updated",
+    "noCustomer": "No customer",
     "actions": {
-      "create": "New Config"
+      "create": "New Config",
+      "downloadTemplate": "Download Template",
+      "import": "Import Excel"
     },
     "filters": {
       "title": "Filters",
       "customerSearchPlaceholder": "Search customers (name or external ID)...",
       "customerFilterHint": "When customers are selected, only projects currently bound to those customers are shown. Empty = all.",
+      "chargeType": "Charge type",
+      "allChargeTypes": "All charge types",
       "noCustomers": "No matching customers",
       "clearAll": "Clear all"
     },
     "placeholders": {
       "projectId": "e.g. my-prod-project-001",
       "name": "Select project name",
+      "customer": "Select customer (optional)",
       "billingAccount": "Select billing account (optional)"
     },
     "hints": {
@@ -690,6 +712,13 @@
       "editTitle": "Edit Project Billing Config",
       "deleteTitle": "Delete Config",
       "deleteConfirm": "Delete the registry row for project \"{projectId}\"? (Fails if any customer is still bound to it.)"
+    },
+    "chargeTypes": {
+      "BILLABLE": "Billable",
+      "NON_BILLABLE": "Not Billable",
+      "CUD": "CUD",
+      "POC": "POC",
+      "STARTUP": "Startup"
     },
     "name": "Name",
     "billingAccount": "Billing account"
@@ -710,7 +739,8 @@
       "SUSTAINED_USAGE_DISCOUNT": "Sustained Usage Discount",
       "COMMITTED_USAGE_DISCOUNT": "Committed Usage Discount (CUD)",
       "COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE": "Committed Usage Discount ($ base)",
-      "PROMOTION": "Promotion"
+      "PROMOTION": "Promotion",
+      "SUBSCRIPTION_BENEFIT": "Subscription Benefit"
     },
     "actions": {
       "create": "Add Credit"
@@ -1246,6 +1276,11 @@
     "billingMonth": "Billing month",
     "customer": "Customer",
     "allCustomers": "All customers",
+    "priceBasis": "Billing basis",
+    "priceBasisOptions": {
+      "STANDARD": "List price",
+      "COST": "Cost"
+    },
     "apply": "Apply filters",
     "syncBigQuery": "Sync BigQuery",
     "syncSuccess": "BigQuery sync complete. {count} rows written.",

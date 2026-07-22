@@ -26,6 +26,7 @@ import {
   type SkuGroupPricingSummary,
   type PricingConfigSnapshot,
 } from '@/lib/pricing';
+import { loadActivePricingBillingAccountIds } from '@/lib/pricing/active-list';
 import {
   applyCreditsToInvoice,
   captureCreditConfigSnapshot,
@@ -301,11 +302,16 @@ export async function executeInvoiceRun(
         const projectIds = activeBindings.map((cp) => cp.projectId);
         projectIds.forEach((p) => allProjectIds.add(p));
 
+        const pricingBillingAccountIds = await loadActivePricingBillingAccountIds(customer.id);
+
         // Get all raw cost entries for this customer's projects within source filter
         const costEntries = await prisma.rawCostEntry.findMany({
           where: {
             ...sourceFilter,
             projectId: { in: projectIds },
+            ...(pricingBillingAccountIds.length > 0
+              ? { billingAccountId: { in: pricingBillingAccountIds } }
+              : {}),
           },
           include: {
             ingestionBatch: true,

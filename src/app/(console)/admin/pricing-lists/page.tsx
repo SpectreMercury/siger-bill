@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { ColumnDef } from '@tanstack/react-table';
 import { api } from '@/lib/client/api';
-import { PricingList, Customer, PaginatedResponse } from '@/lib/client/types';
+import { fetchAllPages } from '@/lib/client/pagination';
+import { PricingList, Customer } from '@/lib/client/types';
 import { DataTable, Button, Alert } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
 import { Card } from '@/components/ui/shadcn/card';
@@ -26,7 +27,15 @@ interface PricingListFormData {
   name: string;
   customerId: string;
   status: string;
+  priceBasis: 'STANDARD' | 'COST';
+  billingAccountIds: string[];
   defaultDiscountPercent: string; // for create only — sets the default rule
+}
+
+interface BillingAccountOption {
+  id: string;
+  billingAccountId: string;
+  name: string | null;
 }
 
 export default function PricingListsPage() {
@@ -35,6 +44,7 @@ export default function PricingListsPage() {
   const tc = useTranslations('common');
   const [pricingLists, setPricingLists] = useState<PricingList[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [billingAccounts, setBillingAccounts] = useState<BillingAccountOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
@@ -45,6 +55,8 @@ export default function PricingListsPage() {
     name: '',
     customerId: '',
     status: 'ACTIVE',
+    priceBasis: 'STANDARD',
+    billingAccountIds: [],
     defaultDiscountPercent: '0',
   });
   const [isSaving, setIsSaving] = useState(false);
@@ -55,12 +67,14 @@ export default function PricingListsPage() {
     setError(null);
 
     try {
-      const [pricingResponse, customersResponse] = await Promise.all([
-        api.get<PaginatedResponse<PricingList>>('/pricing-lists'),
-        api.get<PaginatedResponse<Customer>>('/customers'),
+      const [pricingResponse, customersResponse, billingAccountsResponse] = await Promise.all([
+        fetchAllPages<PricingList>('/pricing-lists'),
+        fetchAllPages<Customer>('/customers'),
+        fetchAllPages<BillingAccountOption>('/billing-accounts'),
       ]);
-      setPricingLists(pricingResponse.data || []);
-      setCustomers(customersResponse.data || []);
+      setPricingLists(pricingResponse);
+      setCustomers(customersResponse);
+      setBillingAccounts(billingAccountsResponse);
     } catch (err) {
       console.error('Error fetching data:', err);
       setError(t('loadFailed'));
@@ -92,6 +106,31 @@ export default function PricingListsPage() {
               <div className="text-xs text-muted-foreground">
                 {row.original.customer.externalId}
               </div>
+            )}
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'priceBasis',
+        header: t('priceBasis'),
+        cell: ({ row }) => (
+          <Badge variant="outline">
+            {t(`basis.${row.original.priceBasis.toLowerCase()}`)}
+          </Badge>
+        ),
+      },
+      {
+        accessorKey: 'billingAccountIds',
+        header: t('billingIds'),
+        cell: ({ row }) => row.original.billingAccountIds.length === 0 ? (
+          <Badge variant="secondary">{t('allBillingIds')}</Badge>
+        ) : (
+          <div className="flex max-w-[280px] flex-wrap gap-1">
+            {row.original.billingAccountIds.slice(0, 2).map((id) => (
+              <Badge key={id} variant="outline" className="font-mono text-xs">{id}</Badge>
+            ))}
+            {row.original.billingAccountIds.length > 2 && (
+              <Badge variant="secondary">+{row.original.billingAccountIds.length - 2}</Badge>
             )}
           </div>
         ),
@@ -152,7 +191,7 @@ export default function PricingListsPage() {
         ),
       },
     ],
-    [t, tc]
+    [router, t, tc]
   );
 
   const handleEdit = (list: PricingList) => {
@@ -161,6 +200,8 @@ export default function PricingListsPage() {
       name: list.name,
       customerId: list.customer.id,
       status: list.status,
+      priceBasis: list.priceBasis,
+      billingAccountIds: list.billingAccountIds,
       defaultDiscountPercent: '0',
     });
     setShowModal(true);
@@ -195,6 +236,8 @@ export default function PricingListsPage() {
       name: '',
       customerId: '',
       status: 'ACTIVE',
+      priceBasis: 'STANDARD',
+      billingAccountIds: [],
       defaultDiscountPercent: '0',
     });
     setShowModal(true);
@@ -209,11 +252,15 @@ export default function PricingListsPage() {
         await api.put(`/pricing-lists/${editingList.id}`, {
           name: formData.name,
           status: formData.status,
+          priceBasis: formData.priceBasis,
+          billingAccountIds: formData.billingAccountIds,
         });
       } else {
         await api.post('/pricing-lists', {
           name: formData.name,
           customerId: formData.customerId,
+          priceBasis: formData.priceBasis,
+          billingAccountIds: formData.billingAccountIds,
           defaultDiscountPercent: parseFloat(formData.defaultDiscountPercent) || 0,
         });
       }
@@ -317,6 +364,79 @@ export default function PricingListsPage() {
               required
               placeholder={t('placeholders.name')}
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="priceBasis">{t('priceBasis')} *</Label>
+            <Select
+              value={formData.priceBasis}
+              onValueChange={(value: 'STANDARD' | 'COST') => setFormData({ ...formData, priceBasis: value })}
+            >
+              <SelectTrigger id="priceBasis">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="STANDARD">{t('basis.standard')}</SelectItem>
+                <SelectItem value="COST">{t('basis.cost')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {t(`basisHints.${formData.priceBasis.toLowerCase()}`)}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>{t('billingIds')}</Label>
+            <div className="rounded-md border">
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, billingAccountIds: [] })}
+                className={`flex w-full items-center gap-3 border-b px-3 py-2.5 text-left text-sm transition-colors ${
+                  formData.billingAccountIds.length === 0 ? 'bg-primary/5 text-primary' : 'hover:bg-muted/50'
+                }`}
+              >
+                <span className={`flex h-4 w-4 items-center justify-center rounded border ${
+                  formData.billingAccountIds.length === 0 ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40'
+                }`}>
+                  {formData.billingAccountIds.length === 0 ? '✓' : ''}
+                </span>
+                <span>
+                  <span className="block font-medium">{t('allBillingIds')}</span>
+                  <span className="block text-xs text-muted-foreground">{t('allBillingIdsHint')}</span>
+                </span>
+              </button>
+              <div className="max-h-48 overflow-y-auto p-1">
+                {billingAccounts.map((account) => {
+                  const selected = formData.billingAccountIds.includes(account.billingAccountId);
+                  return (
+                    <button
+                      key={account.id}
+                      type="button"
+                      onClick={() => setFormData({
+                        ...formData,
+                        billingAccountIds: selected
+                          ? formData.billingAccountIds.filter((id) => id !== account.billingAccountId)
+                          : [...formData.billingAccountIds, account.billingAccountId],
+                      })}
+                      className={`flex w-full items-center gap-3 rounded px-2 py-2 text-left text-sm hover:bg-muted/50 ${selected ? 'bg-muted/40' : ''}`}
+                    >
+                      <span className={`flex h-4 w-4 items-center justify-center rounded border ${
+                        selected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40'
+                      }`}>
+                        {selected ? '✓' : ''}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate">{account.name || account.billingAccountId}</span>
+                        {account.name && (
+                          <span className="block font-mono text-xs text-muted-foreground">{account.billingAccountId}</span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">{t('billingIdsHint')}</p>
           </div>
 
           {!editingList && (

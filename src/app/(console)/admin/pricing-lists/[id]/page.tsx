@@ -57,6 +57,8 @@ interface PricingListDetail {
   id: string;
   name: string;
   status: string;
+  priceBasis: 'STANDARD' | 'COST';
+  billingAccountIds: string[];
   isActive: boolean;
   customer: { id: string; name: string; externalId: string | null };
   rules: PricingRule[];
@@ -535,6 +537,9 @@ export default function PricingListDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 ml-12 sm:ml-0">
+          <Badge variant="outline">
+            {t(`basis.${pricingList.priceBasis.toLowerCase()}`)}
+          </Badge>
           <Badge variant={pricingList.isActive ? 'default' : 'secondary'}>
             {pricingList.isActive ? tc('active') : tc('inactive')}
           </Badge>
@@ -549,7 +554,21 @@ export default function PricingListDetailPage() {
 
       {/* Coverage summary */}
       <Card className="p-4">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+        <div className="flex flex-wrap items-start gap-x-6 gap-y-3 text-sm">
+          <div className="min-w-[220px]">
+            <span className="text-muted-foreground mr-2">{t('billingIds')}:</span>
+            {pricingList.billingAccountIds.length === 0 ? (
+              <Badge variant="secondary">{t('allBillingIds')}</Badge>
+            ) : (
+              <span className="inline-flex flex-wrap gap-1 align-middle">
+                {pricingList.billingAccountIds.map((billingId) => (
+                  <Badge key={billingId} variant="outline" className="font-mono text-xs">
+                    {billingId}
+                  </Badge>
+                ))}
+              </span>
+            )}
+          </div>
           <div>
             <span className="text-muted-foreground mr-2">{t('detail.coverage.total')}:</span>
             <span className="font-semibold">{totalGroups}</span>

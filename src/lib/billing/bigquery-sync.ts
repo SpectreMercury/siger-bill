@@ -17,6 +17,7 @@ export type BigQueryBillingSyncInput = {
   billingMonth: string;
   connectionId?: string;
   customerId?: string;
+  resolvedConnectionIds?: string[];
 };
 
 export type BigQueryBillingSyncResult = {
@@ -106,6 +107,44 @@ async function resolveConnections(
   auth: AuthContext
 ): Promise<GcpBillingConnection[]> {
   const { connectionId, customerId } = input;
+  if (input.resolvedConnectionIds !== undefined) {
+    if (connectionId && !auth.isSuperAdmin) {
+      fail('Only super admin can specify connectionId directly', 403, 'SCOPE_DENIED');
+    }
+    if (customerId && !hasCustomerScope(auth, customerId)) {
+      fail('Access denied to this customer', 403, 'SCOPE_DENIED');
+    }
+
+    const resolvedConnectionIds = Array.from(new Set(input.resolvedConnectionIds));
+    if (resolvedConnectionIds.length === 0) {
+      fail('Billing sync job has no resolved GCP connections', 400, 'NO_BILLING_CONNECTIONS');
+    }
+
+    if (!auth.isSuperAdmin) {
+      const scopedCustomers = await prisma.customer.findMany({
+        where: {
+          id: { in: getCustomerScopes(auth) },
+          gcpConnectionId: { in: resolvedConnectionIds },
+        },
+        select: { gcpConnectionId: true },
+      });
+      const allowedConnectionIds = new Set(
+        scopedCustomers.flatMap((customer) => customer.gcpConnectionId ?? [])
+      );
+      if (resolvedConnectionIds.some((id) => !allowedConnectionIds.has(id))) {
+        fail('Access denied to one or more billing connections', 403, 'SCOPE_DENIED');
+      }
+    }
+
+    const connections = await prisma.gcpConnection.findMany({
+      where: { id: { in: resolvedConnectionIds }, isActive: true },
+    });
+    if (connections.length !== resolvedConnectionIds.length) {
+      fail('One or more GCP billing connections are missing or inactive', 404, 'NOT_FOUND');
+    }
+    return connections;
+  }
+
   let scopedCustomerIdsForSync: string[] | undefined;
 
   if (!auth.isSuperAdmin) {
@@ -194,6 +233,14 @@ async function resolveConnections(
   }
 
   return connections;
+}
+
+export async function resolveBigQueryBillingSyncConnectionIds(
+  input: BigQueryBillingSyncInput,
+  auth: AuthContext
+): Promise<string[]> {
+  const connections = await resolveConnections(input, auth);
+  return connections.map((connection) => connection.id).sort();
 }
 
 export async function runBigQueryBillingSync(

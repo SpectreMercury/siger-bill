@@ -9,24 +9,48 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { prisma } from '@/lib/db';
-import { withPermission } from '@/lib/middleware';
+import { withPermissionAndScope } from '@/lib/middleware';
 import { logUpdate, logDelete } from '@/lib/audit';
-import { PricingListStatus } from '@prisma/client';
+import { PricingBasis, PricingListStatus } from '@prisma/client';
+import { normalizePricingBillingAccountIds } from '@/lib/pricing/billing-account-scope';
 import {
   success,
   notFound,
   serverError,
-  conflict,
+  validationError,
+  badRequest,
 } from '@/lib/utils';
+
+const updatePricingListSchema = z.object({
+  name: z.string().trim().min(1).max(255).optional(),
+  status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+  priceBasis: z.enum(['STANDARD', 'COST']).optional(),
+  billingAccountIds: z.array(z.string().trim().min(1).max(100)).max(100).optional(),
+});
+
+async function getCustomerIdFromPricingList(pricingListId: string): Promise<string | null> {
+  const pricingList = await prisma.pricingList.findUnique({
+    where: { id: pricingListId },
+    select: { customerId: true },
+  });
+  return pricingList?.customerId ?? null;
+}
+
+function resolveCustomerId(_request: NextRequest, routeParams?: { params: Record<string, string> }) {
+  const pricingListId = routeParams?.params.id;
+  return pricingListId ? getCustomerIdFromPricingList(pricingListId) : null;
+}
 
 /**
  * GET /api/pricing-lists/[id]
  *
  * Get pricing list details with rules.
  */
-export const GET = withPermission(
+export const GET = withPermissionAndScope(
   { resource: 'customers', action: 'read' },
+  resolveCustomerId,
   async (request: NextRequest, context): Promise<NextResponse> => {
     try {
       const { id } = context.params;
@@ -55,6 +79,8 @@ export const GET = withPermission(
         id: pricingList.id,
         name: pricingList.name,
         status: pricingList.status,
+        priceBasis: pricingList.priceBasis,
+        billingAccountIds: pricingList.billingAccountIds,
         isActive: pricingList.status === 'ACTIVE',
         customer: pricingList.customer,
         rules: pricingList.pricingRules.map((rule) => ({
@@ -85,12 +111,15 @@ export const GET = withPermission(
  *
  * Update pricing list name or status.
  */
-export const PUT = withPermission(
+export const PUT = withPermissionAndScope(
   { resource: 'customers', action: 'update' },
+  resolveCustomerId,
   async (request: NextRequest, context): Promise<NextResponse> => {
     try {
       const { id } = context.params;
       const body = await request.json();
+      const validation = updatePricingListSchema.safeParse(body);
+      if (!validation.success) return validationError(validation.error);
 
       // Find existing
       const existing = await prisma.pricingList.findUnique({
@@ -101,13 +130,36 @@ export const PUT = withPermission(
         return notFound('Pricing list not found');
       }
 
+      const normalizedBillingAccountIds = validation.data.billingAccountIds === undefined
+        ? undefined
+        : normalizePricingBillingAccountIds(validation.data.billingAccountIds);
+      if (normalizedBillingAccountIds && normalizedBillingAccountIds.length > 0) {
+        const existingBillingAccounts = await prisma.billingAccount.findMany({
+          where: { billingAccountId: { in: normalizedBillingAccountIds } },
+          select: { billingAccountId: true },
+        });
+        const existingIds = new Set(existingBillingAccounts.map((account) => account.billingAccountId));
+        const unknownIds = normalizedBillingAccountIds.filter(
+          (billingAccountId) => !existingIds.has(billingAccountId)
+        );
+        if (unknownIds.length > 0) {
+          return badRequest(`Unknown Billing ID: ${unknownIds.join(', ')}`);
+        }
+      }
+
       // Build update data
       const updateData: Record<string, unknown> = {};
-      if (body.name !== undefined) {
-        updateData.name = body.name;
+      if (validation.data.name !== undefined) {
+        updateData.name = validation.data.name;
       }
-      if (body.status && ['ACTIVE', 'INACTIVE'].includes(body.status)) {
-        updateData.status = body.status as PricingListStatus;
+      if (validation.data.status) {
+        updateData.status = validation.data.status as PricingListStatus;
+      }
+      if (validation.data.priceBasis) {
+        updateData.priceBasis = validation.data.priceBasis as PricingBasis;
+      }
+      if (validation.data.billingAccountIds !== undefined) {
+        updateData.billingAccountIds = normalizedBillingAccountIds;
       }
 
       // Update
@@ -138,6 +190,8 @@ export const PUT = withPermission(
         id: updated.id,
         name: updated.name,
         status: updated.status,
+        priceBasis: updated.priceBasis,
+        billingAccountIds: updated.billingAccountIds,
         isActive: updated.status === 'ACTIVE',
         customer: updated.customer,
         createdAt: updated.createdAt,
@@ -155,8 +209,9 @@ export const PUT = withPermission(
  *
  * Delete a pricing list and its rules.
  */
-export const DELETE = withPermission(
+export const DELETE = withPermissionAndScope(
   { resource: 'customers', action: 'delete' },
+  resolveCustomerId,
   async (request: NextRequest, context): Promise<NextResponse> => {
     try {
       const { id } = context.params;

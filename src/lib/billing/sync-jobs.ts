@@ -1,10 +1,9 @@
 import { prisma } from '@/lib/db';
-import { loadAuthContext } from '@/lib/auth/context';
+import { hasCustomerScope, loadAuthContext } from '@/lib/auth/context';
 import { logAuditEventMinimal } from '@/lib/audit';
 import { runBigQueryBillingSync } from '@/lib/billing/bigquery-sync';
+import type { AuthContext } from '@/lib/types';
 import { AuditAction, BillingSyncJobStatus, Prisma } from '@prisma/client';
-
-const runningJobs = new Set<string>();
 
 export type SerializedBillingSyncJob = {
   id: string;
@@ -44,6 +43,15 @@ type BillingSyncJobRecord = {
   updatedAt: Date;
 };
 
+export function canReadBillingSyncJob(
+  job: Pick<BillingSyncJobRecord, 'createdBy' | 'customerId'>,
+  auth: AuthContext
+): boolean {
+  return auth.isSuperAdmin ||
+    job.createdBy === auth.userId ||
+    (!!job.customerId && hasCustomerScope(auth, job.customerId));
+}
+
 export function serializeBillingSyncJob(job: BillingSyncJobRecord): SerializedBillingSyncJob {
   return {
     id: job.id,
@@ -65,20 +73,14 @@ export function serializeBillingSyncJob(job: BillingSyncJobRecord): SerializedBi
   };
 }
 
-export function startBillingSyncJob(jobId: string): void {
-  if (runningJobs.has(jobId)) return;
-  runningJobs.add(jobId);
-
-  setTimeout(() => {
-    void runBillingSyncJob(jobId).finally(() => {
-      runningJobs.delete(jobId);
-    });
-  }, 0);
-}
-
-async function markFailed(jobId: string, message: string, errors: string[] = []) {
-  await prisma.billingSyncJob.update({
-    where: { id: jobId },
+async function markFailed(
+  jobId: string,
+  message: string,
+  errors: string[] = [],
+  expectedStatus: BillingSyncJobStatus = BillingSyncJobStatus.RUNNING
+) {
+  return prisma.billingSyncJob.updateMany({
+    where: { id: jobId, status: expectedStatus },
     data: {
       status: BillingSyncJobStatus.FAILED,
       errorMessage: message,
@@ -89,38 +91,41 @@ async function markFailed(jobId: string, message: string, errors: string[] = [])
 }
 
 export async function runBillingSyncJob(jobId: string): Promise<void> {
-  const job = await prisma.billingSyncJob.findUnique({ where: { id: jobId } });
-  if (!job) return;
-
-  if (
-    job.status === BillingSyncJobStatus.SUCCEEDED ||
-    job.status === BillingSyncJobStatus.FAILED
-  ) {
-    return;
-  }
-
-  await prisma.billingSyncJob.update({
-    where: { id: jobId },
-    data: {
-      status: BillingSyncJobStatus.RUNNING,
-      startedAt: job.startedAt ?? new Date(),
-      errorMessage: null,
-      errors: [],
-    },
-  });
-
-  const auth = await loadAuthContext(job.createdBy);
-  if (!auth) {
-    await markFailed(jobId, 'Job creator is inactive or no longer exists');
-    return;
-  }
-
+  let job: Awaited<ReturnType<typeof prisma.billingSyncJob.findUnique>> = null;
+  let claimed = false;
   try {
+    job = await prisma.billingSyncJob.findUnique({ where: { id: jobId } });
+    if (!job || job.status !== BillingSyncJobStatus.QUEUED) return;
+
+    const claim = await prisma.billingSyncJob.updateMany({
+      where: {
+        id: jobId,
+        status: BillingSyncJobStatus.QUEUED,
+      },
+      data: {
+        status: BillingSyncJobStatus.RUNNING,
+        startedAt: new Date(),
+        finishedAt: null,
+        errorMessage: null,
+        errors: [],
+      },
+    });
+    if (claim.count !== 1) return;
+    claimed = true;
+
+    const auth = await loadAuthContext(job.createdBy);
+    if (!auth) {
+      throw new Error('Job creator is inactive or no longer exists');
+    }
+
     const result = await runBigQueryBillingSync(
       {
         billingMonth: job.billingMonth,
         connectionId: job.connectionId ?? undefined,
         customerId: job.customerId ?? undefined,
+        resolvedConnectionIds: job.scopeConnectionIds.length > 0
+          ? job.scopeConnectionIds
+          : undefined,
       },
       auth
     );
@@ -128,8 +133,8 @@ export async function runBillingSyncJob(jobId: string): Promise<void> {
     const isFailed = result.batches.length === 0 && !!result.errors?.length;
     const status = isFailed ? BillingSyncJobStatus.FAILED : BillingSyncJobStatus.SUCCEEDED;
 
-    await prisma.billingSyncJob.update({
-      where: { id: jobId },
+    const finalized = await prisma.billingSyncJob.updateMany({
+      where: { id: jobId, status: BillingSyncJobStatus.RUNNING },
       data: {
         status,
         totalRows: result.totalRows,
@@ -141,6 +146,7 @@ export async function runBillingSyncJob(jobId: string): Promise<void> {
         finishedAt: new Date(),
       },
     });
+    if (finalized.count !== 1) return;
 
     await logAuditEventMinimal({
       actorId: job.createdBy,
@@ -157,22 +163,44 @@ export async function runBillingSyncJob(jobId: string): Promise<void> {
         batchesCreated: result.batches.length,
         errors: result.errors,
       },
+    }).catch((auditError) => {
+      console.error('Failed to audit completed billing sync job:', auditError);
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await markFailed(jobId, message, [message]);
+    console.error(`Billing sync job ${jobId} failed:`, error);
+
+    const expectedStatus = claimed
+      ? BillingSyncJobStatus.RUNNING
+      : BillingSyncJobStatus.QUEUED;
+    const failed = await markFailed(jobId, message, [message], expectedStatus).catch((markError) => {
+      console.error(`Failed to mark billing sync job ${jobId} as failed:`, markError);
+      return { count: 0 };
+    });
+    if (failed.count !== 1) return;
+
+    const failedJob = job ?? await prisma.billingSyncJob.findUnique({
+      where: { id: jobId },
+    }).catch((loadError) => {
+      console.error(`Failed to reload billing sync job ${jobId} for audit:`, loadError);
+      return null;
+    });
+    if (!failedJob) return;
+
     await logAuditEventMinimal({
-      actorId: job.createdBy,
+      actorId: failedJob.createdBy,
       action: AuditAction.IMPORT,
       targetTable: 'billing_sync_jobs',
       targetId: jobId,
       metadata: {
-        billingMonth: job.billingMonth,
-        connectionId: job.connectionId,
-        customerId: job.customerId,
+        billingMonth: failedJob.billingMonth,
+        connectionId: failedJob.connectionId,
+        customerId: failedJob.customerId,
         status: BillingSyncJobStatus.FAILED,
         error: message,
       },
+    }).catch((auditError) => {
+      console.error('Failed to audit failed billing sync job:', auditError);
     });
   }
 }

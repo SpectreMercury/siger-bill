@@ -559,6 +559,19 @@
     "title": "定价列表",
     "subtitle": "管理客户定价规则",
     "name": "名称",
+    "priceBasis": "账单版本",
+    "billingIds": "Billing ID 范围",
+    "allBillingIds": "所有 Billing ID",
+    "allBillingIdsHint": "不限制账单账号，使用该客户的全部项目数据",
+    "billingIdsHint": "选择一个或多个 Billing ID 后，只读取这些账单账号下的项目数据；不选择表示全部。",
+    "basis": {
+      "standard": "标准版（列表价）",
+      "cost": "Cost 版（经销商成本）"
+    },
+    "basisHints": {
+      "standard": "以 BigQuery cost_at_list 为计算基数；客户 Credits 中启用的抵扣类型仍会计入账单。",
+      "cost": "以 BigQuery cost 为计算基数；客户 Credits 中启用的抵扣类型同样会计入账单。"
+    },
     "rules": "规则",
     "rulesCount": "条规则",
     "searchPlaceholder": "搜索定价列表...",
@@ -666,19 +679,28 @@
     "loadFailed": "加载失败",
     "saveFailed": "保存失败",
     "deleteFailed": "删除失败",
+    "importFailed": "导入失败",
+    "templateDownloadFailed": "模板下载失败",
+    "importSuccess": "导入完成：新增 {created} 条，更新 {updated} 条",
+    "noCustomer": "不关联客户",
     "actions": {
-      "create": "新增配置"
+      "create": "新增配置",
+      "downloadTemplate": "下载模板",
+      "import": "导入 Excel"
     },
     "filters": {
       "title": "过滤器",
       "customerSearchPlaceholder": "搜索客户 (名称或 external ID)...",
       "customerFilterHint": "选中客户后，只显示当前绑定到这些客户的 project。空则显示全部。",
+      "chargeType": "是否收费类型",
+      "allChargeTypes": "全部收费类型",
       "noCustomers": "未找到匹配客户",
       "clearAll": "清空"
     },
     "placeholders": {
       "projectId": "例如 my-prod-project-001",
       "name": "选择项目名称",
+      "customer": "选择客户（可选）",
       "billingAccount": "选择结算账号（可选）"
     },
     "hints": {
@@ -690,6 +712,13 @@
       "editTitle": "编辑 Project 计费配置",
       "deleteTitle": "删除配置",
       "deleteConfirm": "确定要删除项目 \"{projectId}\" 的户口本条目吗？（如果仍有客户绑定它将失败。）"
+    },
+    "chargeTypes": {
+      "BILLABLE": "收费",
+      "NON_BILLABLE": "不收费",
+      "CUD": "CUD",
+      "POC": "POC",
+      "STARTUP": "Startup"
     },
     "name": "名称",
     "billingAccount": "结算账号"
@@ -710,7 +739,8 @@
       "SUSTAINED_USAGE_DISCOUNT": "持续使用折扣",
       "COMMITTED_USAGE_DISCOUNT": "承诺使用折扣 (CUD)",
       "COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE": "承诺使用折扣 ($ 基)",
-      "PROMOTION": "促销"
+      "PROMOTION": "促销",
+      "SUBSCRIPTION_BENEFIT": "订阅权益"
     },
     "actions": {
       "create": "添加额度"
@@ -1246,6 +1276,11 @@
     "billingMonth": "账单月份",
     "customer": "客户",
     "allCustomers": "全部客户",
+    "priceBasis": "账单口径",
+    "priceBasisOptions": {
+      "STANDARD": "列表价",
+      "COST": "Cost"
+    },
     "apply": "应用筛选",
     "syncBigQuery": "同步 BigQuery",
     "syncSuccess": "BigQuery 同步完成，共写入 {count} 行。",

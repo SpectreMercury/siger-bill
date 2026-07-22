@@ -21,6 +21,7 @@
 
 import { prisma } from '@/lib/db';
 import { Prisma, CreditStatus } from '@prisma/client';
+import { calculateCreditApplicationAmount } from './application';
 
 /**
  * A priced cost entry passed to the credit engine for filter-matching.
@@ -149,6 +150,19 @@ function computeMatchedPool(
   return sum;
 }
 
+function appliesDuringBillingMonth(
+  credit: Pick<CreditForApplication, 'status' | 'remainingAmount' | 'validFrom' | 'validTo' | 'allowCarryOver'>,
+  startOfMonth: Date,
+  endOfMonth: Date
+): boolean {
+  if (credit.status !== CreditStatus.ACTIVE || credit.remainingAmount.lte(0)) return false;
+  if (credit.validFrom > endOfMonth || credit.validTo < startOfMonth) return false;
+  if (!credit.allowCarryOver) {
+    return credit.validFrom >= startOfMonth && credit.validFrom <= endOfMonth;
+  }
+  return true;
+}
+
 /**
  * Apply credits to an invoice amount, honoring each credit's optional
  * SKU / SKU group / project filters.
@@ -172,6 +186,9 @@ export async function applyCreditsToInvoice(
   pricedEntries?: PricedCostEntry[]
 ): Promise<CreditApplicationResult> {
   const credits = await loadApplicableCredits(customerId, billingMonth);
+  const [year, month] = billingMonth.split('-').map(Number);
+  const startOfMonth = new Date(Date.UTC(year, month - 1, 1));
+  const endOfMonth = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
 
   if (credits.length === 0 || invoiceAmount.lte(0)) {
     return {
@@ -188,25 +205,34 @@ export async function applyCreditsToInvoice(
   for (const credit of credits) {
     if (remainingInvoiceAmount.lte(0)) break;
 
-    const matchedPool = computeMatchedPool(credit, pricedEntries);
-    // If credit has filters but no matching cost, skip.
-    if (matchedPool != null && matchedPool.lte(0)) continue;
+    const application = await prisma.$transaction(async (tx): Promise<CreditApplicationEntry | null> => {
+      // Serialize every balance writer on the credit row. This ensures an
+      // invoice always calculates from the latest committed balance and scope,
+      // including administrator adjustments made after the initial list read.
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "credits"
+        WHERE "id" = CAST(${credit.id} AS uuid)
+        FOR UPDATE
+      `;
 
-    const creditRemaining = credit.remainingAmount;
-    // Cap by: credit's remainingAmount, the matched pool (if any), and the
-    // invoice's remaining amount.
-    const caps: Prisma.Decimal[] = [creditRemaining, remainingInvoiceAmount];
-    if (matchedPool != null) caps.push(matchedPool);
-    let amountToApply = caps[0];
-    for (let i = 1; i < caps.length; i++) {
-      amountToApply = Prisma.Decimal.min(amountToApply, caps[i]);
-    }
+      const currentCredit = await tx.credit.findUnique({ where: { id: credit.id } });
+      if (!currentCredit || !appliesDuringBillingMonth(currentCredit, startOfMonth, endOfMonth)) {
+        return null;
+      }
 
-    if (amountToApply.lte(0)) continue;
+      const matchedPool = computeMatchedPool(currentCredit, pricedEntries);
+      if (matchedPool != null && matchedPool.lte(0)) return null;
 
-    const creditRemainingAfter = creditRemaining.sub(amountToApply);
+      const creditRemaining = currentCredit.remainingAmount;
+      const amountToApply = calculateCreditApplicationAmount(
+        creditRemaining,
+        remainingInvoiceAmount,
+        matchedPool
+      );
+      if (amountToApply.lte(0)) return null;
 
-    await prisma.$transaction(async (tx) => {
+      const creditRemainingAfter = creditRemaining.sub(amountToApply);
       await tx.creditLedger.create({
         data: {
           creditId: credit.id,
@@ -216,7 +242,7 @@ export async function applyCreditsToInvoice(
           creditRemainingBefore: creditRemaining,
         },
       });
-      const newStatus = creditRemainingAfter.lte(0) ? CreditStatus.DEPLETED : credit.status;
+      const newStatus = creditRemainingAfter.lte(0) ? CreditStatus.DEPLETED : currentCredit.status;
       await tx.credit.update({
         where: { id: credit.id },
         data: {
@@ -224,19 +250,23 @@ export async function applyCreditsToInvoice(
           status: newStatus,
         },
       });
+
+      return {
+        creditId: currentCredit.id,
+        creditTypes: currentCredit.types,
+        appliedAmount: amountToApply,
+        creditRemainingBefore: creditRemaining,
+        creditRemainingAfter,
+        matchedPool,
+      };
     });
 
-    creditsUsed.push({
-      creditId: credit.id,
-      creditTypes: credit.types,
-      appliedAmount: amountToApply,
-      creditRemainingBefore: creditRemaining,
-      creditRemainingAfter,
-      matchedPool,
-    });
+    if (!application) continue;
 
-    remainingInvoiceAmount = remainingInvoiceAmount.sub(amountToApply);
-    totalCreditsApplied = totalCreditsApplied.add(amountToApply);
+    creditsUsed.push(application);
+
+    remainingInvoiceAmount = remainingInvoiceAmount.sub(application.appliedAmount);
+    totalCreditsApplied = totalCreditsApplied.add(application.appliedAmount);
   }
 
   return {

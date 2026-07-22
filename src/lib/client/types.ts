@@ -111,6 +111,8 @@ export interface PricingList {
   id: string;
   name: string;
   status: 'ACTIVE' | 'INACTIVE';
+  priceBasis: 'STANDARD' | 'COST';
+  billingAccountIds: string[];
   isActive: boolean;
   customer: {
     id: string;
@@ -128,14 +130,18 @@ export interface Credit {
   types: string[];
   totalAmount: string;
   remainingAmount: string;
+  currency: string;
   description: string | null;
   validFrom: string;
   validTo: string;
+  status: 'ACTIVE' | 'EXPIRED' | 'DEPLETED';
   isActive: boolean;
+  allowCarryOver: boolean;
   matchSkuId?: string | null;
   matchSkuGroupId?: string | null;
   matchSkuGroup?: { id: string; code: string; name: string } | null;
   matchProjectId?: string | null;
+  updatedAt: string;
 }
 
 export interface SpecialRule {

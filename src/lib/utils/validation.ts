@@ -280,6 +280,8 @@ export const createPricingListSchema = z.object({
   customerId: z.string().uuid(),
   name: z.string().min(1, 'Name is required').max(255),
   status: z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
+  priceBasis: z.enum(['STANDARD', 'COST']).default('STANDARD'),
+  billingAccountIds: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
   defaultDiscountPercent: z.number().min(0).max(100),
 });
 
@@ -349,7 +351,13 @@ export const CREDIT_TYPES = [
   'COMMITTED_USAGE_DISCOUNT',
   'COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE',
   'PROMOTION',
+  'SUBSCRIPTION_BENEFIT',
 ] as const;
+
+const creditMoneyAmountSchema = z.string().trim().regex(
+  /^(?:0|[1-9]\d{0,13})(?:\.\d{1,4})?$/,
+  'Amount must be a non-negative decimal with at most 14 integer digits and 4 decimal places'
+);
 
 /**
  * Credit creation schema
@@ -376,7 +384,13 @@ export const createCreditSchema = z.object({
  * Credit update schema
  */
 export const updateCreditSchema = z.object({
+  expectedUpdatedAt: z.string().datetime('expectedUpdatedAt must be an ISO timestamp'),
+  types: z.array(z.enum(CREDIT_TYPES)).min(1, 'At least one type is required').optional(),
+  totalAmount: creditMoneyAmountSchema.optional(),
+  remainingAmount: creditMoneyAmountSchema.optional(),
+  adjustmentReason: z.string().trim().min(1).max(500).optional(),
   status: z.enum(['ACTIVE', 'EXPIRED', 'DEPLETED']).optional(),
+  validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
   validTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
   allowCarryOver: z.boolean().optional(),
   description: z.string().optional().nullable(),

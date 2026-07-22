@@ -50,3 +50,6 @@ yarn-error.log*
 # Misc
 *.log
 .vercel
+
+# Local production database snapshots
+/backups/

@@ -11,7 +11,7 @@ import { logAuditEvent } from '@/lib/audit';
 import { getBillingMonthLockReason } from '@/lib/billing/active-sources';
 import { createBillingMonthlyOverride, findActiveBillingMonthlyOverride } from '@/lib/billing/monthly-overrides';
 import { badRequest, conflict, forbidden, serverError, success } from '@/lib/utils';
-import { AuditAction } from '@prisma/client';
+import { AuditAction, Prisma } from '@prisma/client';
 
 function isBillingMonth(value: string | null): value is string {
   return !!value && /^\d{4}-\d{2}$/.test(value);
@@ -19,7 +19,7 @@ function isBillingMonth(value: string | null): value is string {
 
 export const GET = withPermission(
   { resource: 'raw_cost', action: 'read' },
-  async (request: NextRequest): Promise<NextResponse> => {
+  async (request: NextRequest, context): Promise<NextResponse> => {
     try {
       const { searchParams } = new URL(request.url);
       const billingMonth = searchParams.get('billingMonth');
@@ -27,6 +27,12 @@ export const GET = withPermission(
 
       if (!isBillingMonth(billingMonth)) {
         return badRequest('billingMonth is required in YYYY-MM format');
+      }
+      if (customerId && !hasCustomerScope(context.auth, customerId)) {
+        return forbidden('You do not have access to this customer');
+      }
+      if (!customerId && !context.auth.isSuperAdmin) {
+        return forbidden('Select a customer to inspect a billing override');
       }
 
       const activeOverride = await findActiveBillingMonthlyOverride(billingMonth, customerId);
@@ -46,6 +52,7 @@ export const POST = withPermission(
       const billingMonth = formData.get('billingMonth');
       const customerIdValue = formData.get('customerId');
       const fileValue = formData.get('file');
+      const priceBasisValue = formData.get('priceBasis');
 
       if (typeof billingMonth !== 'string' || !isBillingMonth(billingMonth)) {
         return badRequest('billingMonth is required in YYYY-MM format');
@@ -54,6 +61,13 @@ export const POST = withPermission(
       const customerId = typeof customerIdValue === 'string' && customerIdValue.trim()
         ? customerIdValue.trim()
         : undefined;
+      const priceBasisValueString = typeof priceBasisValue === 'string' && priceBasisValue
+        ? priceBasisValue
+        : undefined;
+      if (priceBasisValueString && priceBasisValueString !== 'STANDARD' && priceBasisValueString !== 'COST') {
+        return badRequest('priceBasis must be STANDARD or COST');
+      }
+      const priceBasis = priceBasisValueString as 'STANDARD' | 'COST' | undefined;
 
       if (customerId && !hasCustomerScope(context.auth, customerId)) {
         return forbidden('You do not have access to this customer');
@@ -79,6 +93,7 @@ export const POST = withPermission(
         sourceFilename: fileValue.name,
         fileBuffer: buffer,
         uploadedBy: context.auth.userId,
+        priceBasis,
       });
 
       await logAuditEvent(context, {
@@ -91,6 +106,7 @@ export const POST = withPermission(
           rowCount: override.rowCount,
           sourceFilename: override.sourceFilename,
           sourceFileHash: override.sourceFileHash,
+          priceBasis: override.priceBasis,
         },
       });
 
@@ -101,7 +117,8 @@ export const POST = withPermission(
     } catch (error) {
       console.error('Failed to upload monthly billing override:', error);
       const message = error instanceof Error ? error.message : 'Failed to upload monthly billing override';
-      return serverError(message);
+      if (error instanceof Prisma.PrismaClientKnownRequestError) return serverError(message);
+      return badRequest(message);
     }
   }
 );

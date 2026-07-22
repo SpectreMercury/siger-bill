@@ -19,7 +19,16 @@
     "db:studio": "prisma studio",
     "test:customer-validation": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-customer-validation.ts",
     "test:billing-active-source": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-billing-active-source.ts",
-    "test:credit-validation": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-credit-optional-amount.ts"
+    "test:credit-validation": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-credit-optional-amount.ts",
+    "test:credit-update": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-credit-update.ts",
+    "test:credit-application": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-credit-application.ts",
+    "test:monthly-billing-template": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-monthly-billing-template.ts",
+    "test:monthly-billing-live": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-monthly-billing-live.ts",
+    "test:billing-sync-lifecycle": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-billing-sync-job-lifecycle.ts",
+    "test:billing-sync-dispatch": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-billing-sync-dispatch.ts",
+    "test:project-billing-import": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-project-billing-config-import.ts",
+    "test:pricing-billing-scope": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-pricing-billing-account-scope.ts",
+    "test:monthly-override-basis": "ts-node -r tsconfig-paths/register --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-monthly-override-basis.ts"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^8.1.1",
@@ -42,6 +51,7 @@
     "@radix-ui/react-toast": "^1.2.15",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tanstack/react-table": "^8.21.3",
+    "@vercel/functions": "^3.7.5",
     "autoprefixer": "^10.4.24",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",

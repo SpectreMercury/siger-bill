@@ -32,6 +32,7 @@ import {
   capturePricingConfigSnapshot,
   loadSkuGroupMappings,
 } from '@/lib/pricing';
+import { loadActivePricingBillingAccountIds } from '@/lib/pricing/active-list';
 import {
   applyCreditsToInvoice,
   captureCreditConfigSnapshot,
@@ -775,11 +776,16 @@ export async function executeUnifiedInvoiceRun(
         const projectIds = activeBindings.map((cp) => cp.projectId);
         projectIds.forEach((p) => allSubaccountIds.add(p));
 
+        const pricingBillingAccountIds = await loadActivePricingBillingAccountIds(customer.id);
+
         // Query BillingLineItem for this customer's projects
         const lineItems = await prisma.billingLineItem.findMany({
           where: {
             ...lineItemFilter,
             subaccountId: { in: projectIds },
+            ...(pricingBillingAccountIds.length > 0
+              ? { accountId: { in: pricingBillingAccountIds } }
+              : {}),
           },
         });
 

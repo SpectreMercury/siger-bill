@@ -19,6 +19,7 @@
 
 import { prisma } from '@/lib/db';
 import { Prisma, PricingRuleType } from '@prisma/client';
+import { ACTIVE_PRICING_LIST_ORDER } from './active-list';
 
 export interface SkuGroupMapping {
   skuId: string;
@@ -106,10 +107,12 @@ export async function loadSkuGroupMappings(): Promise<Map<string, SkuGroupMappin
  */
 export async function loadPricingRules(customerId: string): Promise<{
   pricingListId: string | null;
+  billingAccountIds: string[];
   rules: PricingRuleData[];
 }> {
   const pricingList = await prisma.pricingList.findFirst({
     where: { customerId, status: 'ACTIVE' },
+    orderBy: ACTIVE_PRICING_LIST_ORDER,
     include: {
       pricingRules: {
         include: {
@@ -121,7 +124,7 @@ export async function loadPricingRules(customerId: string): Promise<{
   });
 
   if (!pricingList) {
-    return { pricingListId: null, rules: [] };
+    return { pricingListId: null, billingAccountIds: [], rules: [] };
   }
 
   const rules: PricingRuleData[] = pricingList.pricingRules.map((r) => ({
@@ -137,7 +140,11 @@ export async function loadPricingRules(customerId: string): Promise<{
     effectiveEnd: r.effectiveEnd,
   }));
 
-  return { pricingListId: pricingList.id, rules };
+  return {
+    pricingListId: pricingList.id,
+    billingAccountIds: pricingList.billingAccountIds,
+    rules,
+  };
 }
 
 function isRuleEffective(
@@ -319,6 +326,7 @@ export async function applyPricingForCustomer(
  */
 export interface PricingConfigSnapshot {
   pricingListId: string | null;
+  billingAccountIds: string[];
   rules: Array<{
     ruleId: string;
     isDefault: boolean;
@@ -337,10 +345,11 @@ export interface PricingConfigSnapshot {
 export async function capturePricingConfigSnapshot(
   customerId: string
 ): Promise<PricingConfigSnapshot> {
-  const { pricingListId, rules } = await loadPricingRules(customerId);
+  const { pricingListId, billingAccountIds, rules } = await loadPricingRules(customerId);
 
   return {
     pricingListId,
+    billingAccountIds,
     rules: rules.map((r) => ({
       ruleId: r.id,
       isDefault: r.isDefault,

@@ -2,8 +2,14 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { api } from '@/lib/client/api';
+import { api, formatApiError } from '@/lib/client/api';
 import { Credit, SkuGroup, PaginatedResponse } from '@/lib/client/types';
+import {
+  creditEditPayload,
+  creditToEditForm,
+  type CreditEditFormData,
+} from '@/lib/credits/edit-form';
+import { compareCreditAmounts, creditAmountChanged } from '@/lib/credits/decimal-input';
 import { DataTable, Alert } from '@/components/ui';
 import { Button } from '@/components/ui/shadcn/button';
 import { Card } from '@/components/ui/shadcn/card';
@@ -12,6 +18,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/shadcn/input';
 import { Label } from '@/components/ui/shadcn/label';
 import { Textarea } from '@/components/ui/shadcn/textarea';
+import { Switch } from '@/components/ui/shadcn/switch';
 import {
   Select,
   SelectContent,
@@ -20,7 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/shadcn/select';
 import { Can } from '@/components/auth';
-import { Plus, Eye, Check, X } from 'lucide-react';
+import { Plus, Eye, Check, Pencil, X } from 'lucide-react';
 
 const CREDIT_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'FEE_UTILIZATION_OFFSET', label: 'Fee Utilization Offset' },
@@ -29,6 +36,7 @@ const CREDIT_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'COMMITTED_USAGE_DISCOUNT', label: 'Committed Usage Discount' },
   { value: 'COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE', label: 'Committed Usage Discount ($ base)' },
   { value: 'PROMOTION', label: 'Promotion' },
+  { value: 'SUBSCRIPTION_BENEFIT', label: 'Subscription Benefit' },
 ];
 
 interface CreditLedgerEntry {
@@ -40,22 +48,14 @@ interface CreditLedgerEntry {
   description: string | null;
   invoiceId: string | null;
   createdAt: string;
+  actor: { id: string; email: string; name: string } | null;
 }
 
 interface CustomerCreditsTabProps {
   customerId: string;
 }
 
-interface FormData {
-  types: string[];
-  totalAmount: string;
-  description: string;
-  validFrom: string;
-  validTo: string;
-  matchSkuId: string;
-  matchSkuGroupId: string;
-  matchProjectId: string;
-}
+type FormData = CreditEditFormData;
 
 const emptyForm = (): FormData => {
   const today = new Date();
@@ -64,16 +64,27 @@ const emptyForm = (): FormData => {
   return {
     types: ['DISCOUNT'],
     totalAmount: '',
+    remainingAmount: '',
     description: '',
     validFrom: today.toISOString().split('T')[0],
     validTo: nextYear.toISOString().split('T')[0],
+    status: 'ACTIVE',
+    allowCarryOver: false,
     matchSkuId: '',
     matchSkuGroupId: '',
     matchProjectId: '',
+    expectedUpdatedAt: '',
+    originalRemainingAmount: '',
+    adjustmentReason: '',
   };
 };
 
 const labelForType = (v: string) => CREDIT_TYPE_OPTIONS.find((o) => o.value === v)?.label ?? v;
+
+const formatCurrency = (value: string | number): string => {
+  const num = typeof value === 'string' ? parseFloat(value) : value;
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
+};
 
 export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
   const [credits, setCredits] = useState<Credit[]>([]);
@@ -81,8 +92,9 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
   const [ledgerEntries, setLedgerEntries] = useState<CreditLedgerEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showFormModal, setShowFormModal] = useState(false);
   const [showLedgerModal, setShowLedgerModal] = useState(false);
+  const [editingCredit, setEditingCredit] = useState<Credit | null>(null);
   const [, setSelectedCreditId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingLedger, setIsLoadingLedger] = useState(false);
@@ -129,11 +141,20 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
   useEffect(() => { fetchCredits(); }, [fetchCredits]);
 
   const handleCreate = () => {
+    setEditingCredit(null);
     setFormData(emptyForm());
     setTypeSearchQuery('');
     setTypeDropdownOpen(false);
-    setShowCreateModal(true);
+    setShowFormModal(true);
   };
+
+  const handleEdit = useCallback((credit: Credit) => {
+    setEditingCredit(credit);
+    setFormData(creditToEditForm(credit));
+    setTypeSearchQuery('');
+    setTypeDropdownOpen(false);
+    setShowFormModal(true);
+  }, []);
 
   const handleSubmit = async () => {
     if (formData.types.length === 0) {
@@ -141,30 +162,51 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
       return;
     }
     const amount = formData.totalAmount.trim();
+    const remainingAmount = formData.remainingAmount.trim();
+    if (editingCredit) {
+      const remainingVsTotal = compareCreditAmounts(remainingAmount, amount);
+      if (!amount || !remainingAmount || remainingVsTotal == null) {
+        setError('Amounts must be non-negative with at most 14 integer digits and 4 decimal places');
+        return;
+      }
+      if (remainingVsTotal > 0) {
+        setError('Remaining balance must be between 0 and the total amount');
+        return;
+      }
+      if (creditAmountChanged(remainingAmount, formData.originalRemainingAmount) && !formData.adjustmentReason.trim()) {
+        setError('Balance adjustment reason is required when changing the remaining balance');
+        return;
+      }
+    }
     setIsSaving(true);
     setError(null);
     try {
-      await api.post(`/customers/${customerId}/credits`, {
-        types: formData.types,
-        ...(amount ? { totalAmount: parseFloat(amount) } : {}),
-        description: formData.description || undefined,
-        validFrom: formData.validFrom,
-        validTo: formData.validTo,
-        matchSkuId: formData.matchSkuId.trim() || null,
-        matchSkuGroupId: formData.matchSkuGroupId || null,
-        matchProjectId: formData.matchProjectId.trim() || null,
-      });
-      setShowCreateModal(false);
-      fetchCredits();
+      if (editingCredit) {
+        await api.patch(`/credits/${editingCredit.id}`, creditEditPayload(formData));
+      } else {
+        await api.post(`/customers/${customerId}/credits`, {
+          types: formData.types,
+          ...(amount ? { totalAmount: parseFloat(amount) } : {}),
+          description: formData.description.trim() || undefined,
+          validFrom: formData.validFrom,
+          validTo: formData.validTo,
+          allowCarryOver: formData.allowCarryOver,
+          matchSkuId: formData.matchSkuId.trim() || null,
+          matchSkuGroupId: formData.matchSkuGroupId || null,
+          matchProjectId: formData.matchProjectId.trim() || null,
+        });
+      }
+      setShowFormModal(false);
+      await fetchCredits();
     } catch (err) {
-      console.error('Error creating credit:', err);
-      setError(err instanceof Error ? err.message : 'Failed to create credit');
+      console.error('Error saving credit:', err);
+      setError(formatApiError(err, 'Failed to save credit'));
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleViewLedger = async (creditId: string) => {
+  const handleViewLedger = useCallback(async (creditId: string) => {
     setSelectedCreditId(creditId);
     setIsLoadingLedger(true);
     setShowLedgerModal(true);
@@ -177,12 +219,7 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
     } finally {
       setIsLoadingLedger(false);
     }
-  };
-
-  const formatCurrency = (value: string | number): string => {
-    const num = typeof value === 'string' ? parseFloat(value) : value;
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
-  };
+  }, []);
 
   const columns: ColumnDef<Credit>[] = useMemo(
     () => [
@@ -247,11 +284,11 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
         cell: ({ row }) => new Date(row.original.validTo).toLocaleDateString(),
       },
       {
-        accessorKey: 'isActive',
+        accessorKey: 'status',
         header: 'Status',
         cell: ({ row }) => (
-          <Badge variant={row.original.isActive ? 'default' : 'secondary'}>
-            {row.original.isActive ? 'Active' : 'Inactive'}
+          <Badge variant={row.original.status === 'ACTIVE' ? 'default' : 'secondary'}>
+            {row.original.status}
           </Badge>
         ),
       },
@@ -259,14 +296,22 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
         id: 'actions',
         header: '',
         cell: ({ row }) => (
-          <Button variant="ghost" size="sm" onClick={() => handleViewLedger(row.original.id)}>
-            <Eye className="h-4 w-4 mr-1" />
-            Ledger
-          </Button>
+          <div className="flex items-center justify-end gap-1">
+            <Can resource="credits" action="update">
+              <Button variant="ghost" size="sm" onClick={() => handleEdit(row.original)}>
+                <Pencil className="h-4 w-4 mr-1" />
+                Edit
+              </Button>
+            </Can>
+            <Button variant="ghost" size="sm" onClick={() => handleViewLedger(row.original.id)}>
+              <Eye className="h-4 w-4 mr-1" />
+              Ledger
+            </Button>
+          </div>
         ),
       },
     ],
-    []
+    [handleEdit, handleViewLedger]
   );
 
   const totals = useMemo(() => {
@@ -321,12 +366,12 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
         />
       </Card>
 
-      {/* Create Credit Modal */}
+      {/* Create / Edit Credit Modal */}
       <Modal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        title="New Credit"
-        size="md"
+        isOpen={showFormModal}
+        onClose={() => setShowFormModal(false)}
+        title={editingCredit ? 'Edit Credit' : 'New Credit'}
+        size="lg"
       >
         <div className="space-y-4">
           {/* Types multi-select with search */}
@@ -386,19 +431,78 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
             </div>
           </div>
 
-          <div>
-            <Label htmlFor="totalAmount">Amount</Label>
-            <Input
-              id="totalAmount"
-              type="number"
-              value={formData.totalAmount}
-              onChange={(e) => setFormData({ ...formData, totalAmount: e.target.value })}
-              placeholder="1000.00"
-              min="0"
-              step="0.01"
-              className="mt-1"
-            />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="totalAmount">Total Amount</Label>
+              <Input
+                id="totalAmount"
+                type="number"
+                value={formData.totalAmount}
+                onChange={(e) => setFormData({ ...formData, totalAmount: e.target.value })}
+                placeholder="1000.00"
+                min="0"
+                step="0.0001"
+                className="mt-1"
+              />
+            </div>
+            {editingCredit ? (
+              <div>
+                <Label htmlFor="remainingAmount">Remaining Balance *</Label>
+                <Input
+                  id="remainingAmount"
+                  type="number"
+                  value={formData.remainingAmount}
+                  onChange={(e) => setFormData({ ...formData, remainingAmount: e.target.value })}
+                  min="0"
+                  max={formData.totalAmount || undefined}
+                  step="0.0001"
+                  className="mt-1"
+                  required
+                />
+              </div>
+            ) : null}
           </div>
+
+          {editingCredit && creditAmountChanged(formData.remainingAmount, formData.originalRemainingAmount) ? (
+            <div>
+              <Label htmlFor="adjustmentReason">Balance Adjustment Reason *</Label>
+              <Textarea
+                id="adjustmentReason"
+                value={formData.adjustmentReason}
+                onChange={(e) => setFormData({ ...formData, adjustmentReason: e.target.value })}
+                rows={2}
+                maxLength={500}
+                placeholder="Explain why the remaining balance is being changed..."
+                className="mt-1"
+                required
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                This reason is saved in the credit ledger with the before and after balance.
+              </p>
+            </div>
+          ) : null}
+
+          {editingCredit ? (
+            <div>
+              <Label htmlFor="creditStatus">Status *</Label>
+              <Select
+                value={formData.status}
+                onValueChange={(status: FormData['status']) => setFormData({ ...formData, status })}
+              >
+                <SelectTrigger id="creditStatus" className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ACTIVE">ACTIVE</SelectItem>
+                  <SelectItem value="EXPIRED">EXPIRED</SelectItem>
+                  <SelectItem value="DEPLETED">DEPLETED</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                ACTIVE requires a positive balance; DEPLETED requires a zero balance.
+              </p>
+            </div>
+          ) : null}
 
           <div>
             <Label htmlFor="description">Description</Label>
@@ -485,10 +589,24 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
             </div>
           </div>
 
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div className="pr-4">
+              <Label htmlFor="allowCarryOver">Allow Carry Over</Label>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Keep unused credit available in later billing months until Valid To.
+              </p>
+            </div>
+            <Switch
+              id="allowCarryOver"
+              checked={formData.allowCarryOver}
+              onCheckedChange={(allowCarryOver) => setFormData({ ...formData, allowCarryOver })}
+            />
+          </div>
+
           <div className="flex justify-end gap-3 pt-4">
-            <Button variant="outline" onClick={() => setShowCreateModal(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setShowFormModal(false)}>Cancel</Button>
             <Button onClick={handleSubmit} disabled={isSaving || formData.types.length === 0}>
-              {isSaving ? 'Creating...' : 'Create'}
+              {isSaving ? 'Saving...' : editingCredit ? 'Save Changes' : 'Create'}
             </Button>
           </div>
         </div>
@@ -530,7 +648,12 @@ export function CustomerCreditsTab({ customerId }: CustomerCreditsTabProps) {
                       {parseFloat(entry.amount) >= 0 ? '+' : ''}{formatCurrency(entry.amount)}
                     </td>
                     <td className="px-4 py-2 text-right font-medium">{formatCurrency(entry.balanceAfter)}</td>
-                    <td className="px-4 py-2 text-muted-foreground">{entry.description || '-'}</td>
+                    <td className="px-4 py-2 text-muted-foreground">
+                      <div>{entry.description || '-'}</div>
+                      {entry.actor ? (
+                        <div className="text-xs">By {entry.actor.name || entry.actor.email}</div>
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>

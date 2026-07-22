@@ -18,6 +18,7 @@ import {
   badRequest,
 } from '@/lib/utils';
 import { z } from 'zod';
+import { isValidBigQueryPathPart } from '@/lib/billing/bigquery-reference';
 
 function forbidden() {
   return NextResponse.json({ error: 'Super admin access required' }, { status: 403 });
@@ -32,6 +33,11 @@ const apiKeyCredsSchema = z.object({
   key: z.string().min(1),
 });
 
+const bigQueryPathPartSchema = z.string().trim().min(1).max(255).refine(
+  isValidBigQueryPathPart,
+  'Enter only the dataset or table name, without project/dataset prefixes or dots.'
+);
+
 const createConnectionSchema = z.object({
   name: z.string().min(1).max(255),
   description: z.string().optional().nullable(),
@@ -41,8 +47,8 @@ const createConnectionSchema = z.object({
   // BigQuery billing export config (optional)
   billingProjectId: z.string().max(255).optional().nullable(),
   billingJobProjectId: z.string().max(255).optional().nullable(),
-  billingDatasetId: z.string().max(255).optional().nullable(),
-  billingTableName: z.string().max(255).optional().nullable(),
+  billingDatasetId: bigQueryPathPartSchema.optional().nullable(),
+  billingTableName: bigQueryPathPartSchema.optional().nullable(),
   billingAccountIds: z.array(z.string()).optional().default([]),
   isDefault: z.boolean().default(false),
   isActive: z.boolean().default(true),

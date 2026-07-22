@@ -29,16 +29,17 @@ model User {
   // Relations
   userRoles                    UserRole[]
   userScopes                   UserScope[]
-  auditLogs                    AuditLog[]               @relation("AuditActor")
-  invoiceRuns                  InvoiceRun[]             @relation("InvoiceRunCreator")
-  rawCostIngestionBatches      RawCostIngestionBatch[]  @relation("IngestionCreator")
-  billingIngestionBatches      BillingIngestionBatch[]  @relation("BillingIngestionCreator") // Phase 5
-  billingSyncJobs              BillingSyncJob[]         @relation("BillingSyncJobCreator")
-  billingMonthlyOverrides      BillingMonthlyOverride[] @relation("BillingMonthlyOverrideUploader")
-  payments                     Payment[]                @relation("PaymentRecorder") // Phase X
-  gcpConnections               GcpConnection[]          @relation("GcpConnectionCreator")
-  projectBillingConfigsCreated ProjectBillingConfig[]   @relation("ProjectBillingConfigCreator")
-  projectBillingConfigsUpdated ProjectBillingConfig[]   @relation("ProjectBillingConfigUpdater")
+  auditLogs                    AuditLog[]                @relation("AuditActor")
+  invoiceRuns                  InvoiceRun[]              @relation("InvoiceRunCreator")
+  rawCostIngestionBatches      RawCostIngestionBatch[]   @relation("IngestionCreator")
+  billingIngestionBatches      BillingIngestionBatch[]   @relation("BillingIngestionCreator") // Phase 5
+  billingSyncJobs              BillingSyncJob[]          @relation("BillingSyncJobCreator")
+  billingMonthlyOverrides      BillingMonthlyOverride[]  @relation("BillingMonthlyOverrideUploader")
+  payments                     Payment[]                 @relation("PaymentRecorder") // Phase X
+  gcpConnections               GcpConnection[]           @relation("GcpConnectionCreator")
+  projectBillingConfigsCreated ProjectBillingConfig[]    @relation("ProjectBillingConfigCreator")
+  projectBillingConfigsUpdated ProjectBillingConfig[]    @relation("ProjectBillingConfigUpdater")
+  creditBalanceAdjustments     CreditBalanceAdjustment[] @relation("CreditBalanceAdjustmentActor")
 
   @@index([email])
   @@index([isActive])
@@ -278,16 +279,27 @@ model Project {
 /// table via the string `projectId`. The legacy `Project` table is kept as a
 /// GCP-side cache (projectNumber/iamRole/status auto-fetched from Resource
 /// Manager) and is loosely associated by the same `projectId` string.
+enum ProjectChargeType {
+  BILLABLE
+  NON_BILLABLE
+  CUD
+  POC
+  STARTUP
+
+  @@map("project_charge_type")
+}
+
 model ProjectBillingConfig {
-  id               String   @id @default(uuid()) @db.Uuid
-  projectId        String   @unique @map("project_id") @db.VarChar(100)
-  name             String?  @db.VarChar(255)
-  billable         Boolean  @default(true)
-  billingAccountId String?  @map("billing_account_id") @db.Uuid
-  createdBy        String?  @map("created_by") @db.Uuid // null if seeded / system-created
-  updatedBy        String?  @map("updated_by") @db.Uuid
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id               String            @id @default(uuid()) @db.Uuid
+  projectId        String            @unique @map("project_id") @db.VarChar(100)
+  name             String?           @db.VarChar(255)
+  billable         Boolean           @default(true)
+  chargeType       ProjectChargeType @default(BILLABLE) @map("charge_type")
+  billingAccountId String?           @map("billing_account_id") @db.Uuid
+  createdBy        String?           @map("created_by") @db.Uuid // null if seeded / system-created
+  updatedBy        String?           @map("updated_by") @db.Uuid
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   billingAccount   BillingAccount?   @relation(fields: [billingAccountId], references: [id], onDelete: SetNull)
@@ -296,6 +308,7 @@ model ProjectBillingConfig {
   customerProjects CustomerProject[]
 
   @@index([billingAccountId])
+  @@index([chargeType])
   @@map("project_billing_configs")
 }
 
@@ -528,6 +541,8 @@ model BillingSyncJob {
   billingMonth        String               @map("billing_month") @db.VarChar(7)
   connectionId        String?              @map("connection_id") @db.Uuid
   customerId          String?              @map("customer_id") @db.Uuid
+  scopeKey            String               @map("scope_key") @db.VarChar(255)
+  scopeConnectionIds  String[]             @default([]) @map("scope_connection_ids") @db.Uuid
   status              BillingSyncJobStatus @default(QUEUED)
   totalRows           Int                  @default(0) @map("total_rows")
   batches             Json?                @db.JsonB
@@ -542,12 +557,13 @@ model BillingSyncJob {
   updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz
 
   creator    User           @relation("BillingSyncJobCreator", fields: [createdBy], references: [id], onDelete: Restrict)
-  connection GcpConnection?  @relation(fields: [connectionId], references: [id], onDelete: SetNull)
-  customer   Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  connection GcpConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  customer   Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
   @@index([billingMonth, status])
   @@index([connectionId, billingMonth])
   @@index([customerId, billingMonth])
+  @@index([scopeKey, billingMonth])
   @@index([createdBy])
   @@index([createdAt])
   @@map("billing_sync_jobs")
@@ -557,17 +573,18 @@ model BillingSyncJob {
 /// Keeps BigQuery-imported data immutable while allowing an uploaded Excel
 /// version to become the active source for a month/customer scope.
 model BillingMonthlyOverride {
-  id                      String    @id @default(uuid()) @db.Uuid
-  billingMonth            String    @map("billing_month") @db.VarChar(7)
-  customerId              String?   @map("customer_id") @db.Uuid
-  billingIngestionBatchId String    @unique @map("billing_ingestion_batch_id") @db.Uuid
-  sourceFilename          String    @map("source_filename") @db.VarChar(255)
-  sourceFileHash          String    @map("source_file_hash") @db.VarChar(64)
-  rowCount                Int       @map("row_count")
-  isActive                Boolean   @default(true) @map("is_active")
-  uploadedBy              String    @map("uploaded_by") @db.Uuid
-  uploadedAt              DateTime  @default(now()) @map("uploaded_at") @db.Timestamptz
-  deactivatedAt           DateTime? @map("deactivated_at") @db.Timestamptz
+  id                      String       @id @default(uuid()) @db.Uuid
+  billingMonth            String       @map("billing_month") @db.VarChar(7)
+  priceBasis              PricingBasis @default(COST) @map("price_basis")
+  customerId              String?      @map("customer_id") @db.Uuid
+  billingIngestionBatchId String       @unique @map("billing_ingestion_batch_id") @db.Uuid
+  sourceFilename          String       @map("source_filename") @db.VarChar(255)
+  sourceFileHash          String       @map("source_file_hash") @db.VarChar(64)
+  rowCount                Int          @map("row_count")
+  isActive                Boolean      @default(true) @map("is_active")
+  uploadedBy              String       @map("uploaded_by") @db.Uuid
+  uploadedAt              DateTime     @default(now()) @map("uploaded_at") @db.Timestamptz
+  deactivatedAt           DateTime?    @map("deactivated_at") @db.Timestamptz
 
   customer              Customer?                    @relation("BillingMonthlyOverrideCustomer", fields: [customerId], references: [id], onDelete: SetNull)
   uploader              User                         @relation("BillingMonthlyOverrideUploader", fields: [uploadedBy], references: [id], onDelete: Restrict)
@@ -977,14 +994,24 @@ enum PricingListStatus {
   @@map("pricing_list_status")
 }
 
+/// Which upstream GCP amount is used as the customer pricing base.
+enum PricingBasis {
+  STANDARD // Public/list price base (cost_at_list); configured credits are independent
+  COST // Reseller cost base (cost); configured credits are independent
+
+  @@map("pricing_basis")
+}
+
 /// Pricing list - customer-specific pricing configuration
 model PricingList {
-  id         String            @id @default(uuid()) @db.Uuid
-  customerId String            @map("customer_id") @db.Uuid
-  name       String            @db.VarChar(255)
-  status     PricingListStatus @default(ACTIVE)
-  createdAt  DateTime          @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt  DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+  id                String            @id @default(uuid()) @db.Uuid
+  customerId        String            @map("customer_id") @db.Uuid
+  name              String            @db.VarChar(255)
+  status            PricingListStatus @default(ACTIVE)
+  priceBasis        PricingBasis      @default(STANDARD) @map("price_basis")
+  billingAccountIds String[]          @default([]) @map("billing_account_ids")
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
@@ -1060,6 +1087,7 @@ enum CreditType {
   COMMITTED_USAGE_DISCOUNT // GCP CUD (committed usage discount)
   COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE // GCP $-based CUD
   PROMOTION // Marketing / promotional credits
+  SUBSCRIPTION_BENEFIT // Google Cloud subscription benefit
 
   @@map("credit_type")
 }
@@ -1105,9 +1133,10 @@ model Credit {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
-  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  matchSkuGroup SkuGroup?      @relation("CreditMatchSkuGroup", fields: [matchSkuGroupId], references: [id], onDelete: SetNull)
-  ledgerEntries CreditLedger[]
+  customer           Customer                  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  matchSkuGroup      SkuGroup?                 @relation("CreditMatchSkuGroup", fields: [matchSkuGroupId], references: [id], onDelete: SetNull)
+  ledgerEntries      CreditLedger[]
+  balanceAdjustments CreditBalanceAdjustment[]
 
   @@index([customerId, status])
   @@index([validFrom, validTo])
@@ -1137,6 +1166,27 @@ model CreditLedger {
   @@index([invoiceId])
   @@index([invoiceRunId])
   @@map("credit_ledger")
+}
+
+/// Manual changes to a credit's remaining balance. Invoice applications stay
+/// in credit_ledger; administrator corrections are recorded here so that every
+/// balance mutation has an immutable reason, actor, and before/after snapshot.
+model CreditBalanceAdjustment {
+  id              String   @id @default(uuid()) @db.Uuid
+  creditId        String   @map("credit_id") @db.Uuid
+  amountDelta     Decimal  @map("amount_delta") @db.Decimal(18, 4)
+  remainingBefore Decimal  @map("remaining_before") @db.Decimal(18, 4)
+  remainingAfter  Decimal  @map("remaining_after") @db.Decimal(18, 4)
+  reason          String   @db.VarChar(500)
+  adjustedBy      String   @map("adjusted_by") @db.Uuid
+  adjustedAt      DateTime @default(now()) @map("adjusted_at") @db.Timestamptz
+
+  credit Credit @relation(fields: [creditId], references: [id], onDelete: Restrict)
+  actor  User   @relation("CreditBalanceAdjustmentActor", fields: [adjustedBy], references: [id], onDelete: Restrict)
+
+  @@index([creditId, adjustedAt])
+  @@index([adjustedBy])
+  @@map("credit_balance_adjustments")
 }
 
 // =============================================================================
@@ -1397,8 +1447,8 @@ model GcpConnection {
   updatedAt           DateTime    @updatedAt @map("updated_at") @db.Timestamptz
   createdById         String?     @map("created_by_id") @db.Uuid
 
-  createdBy User?      @relation("GcpConnectionCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  customers Customer[] @relation("CustomerGcpConnection")
+  createdBy       User?            @relation("GcpConnectionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  customers       Customer[]       @relation("CustomerGcpConnection")
   billingSyncJobs BillingSyncJob[]
 
   @@index([group])

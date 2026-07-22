@@ -10,12 +10,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { withPermission } from '@/lib/middleware';
+import { getCustomerScopes, hasCustomerScope } from '@/lib/auth/context';
 import { logCreate } from '@/lib/audit';
 import { PricingListStatus, Prisma } from '@prisma/client';
+import { normalizePricingBillingAccountIds } from '@/lib/pricing/billing-account-scope';
 import {
   success,
   created,
   serverError,
+  forbidden,
+  badRequest,
   validationError,
   notFound,
   createPricingListSchema,
@@ -28,7 +32,7 @@ import {
  */
 export const GET = withPermission(
   { resource: 'customers', action: 'list' },
-  async (request: NextRequest): Promise<NextResponse> => {
+  async (request: NextRequest, context): Promise<NextResponse> => {
     try {
       const { searchParams } = new URL(request.url);
 
@@ -39,8 +43,16 @@ export const GET = withPermission(
       const customerId = searchParams.get('customerId');
       const status = searchParams.get('status') as PricingListStatus | null;
 
+      if (customerId && !hasCustomerScope(context.auth, customerId)) {
+        return forbidden('You do not have access to this customer');
+      }
+
       const where: Prisma.PricingListWhereInput = {};
-      if (customerId) where.customerId = customerId;
+      if (customerId) {
+        where.customerId = customerId;
+      } else if (!context.auth.isSuperAdmin) {
+        where.customerId = { in: getCustomerScopes(context.auth) };
+      }
       if (status && ['ACTIVE', 'INACTIVE'].includes(status)) where.status = status;
 
       const [pricingLists, total] = await Promise.all([
@@ -61,6 +73,8 @@ export const GET = withPermission(
         id: pl.id,
         name: pl.name,
         status: pl.status,
+        priceBasis: pl.priceBasis,
+        billingAccountIds: pl.billingAccountIds,
         isActive: pl.status === 'ACTIVE',
         customer: pl.customer,
         ruleCount: pl._count.pricingRules,
@@ -99,9 +113,25 @@ export const POST = withPermission(
         return validationError(validation.error);
       }
       const data = validation.data;
+      const billingAccountIds = normalizePricingBillingAccountIds(data.billingAccountIds);
+
+      if (billingAccountIds.length > 0) {
+        const existingBillingAccounts = await prisma.billingAccount.findMany({
+          where: { billingAccountId: { in: billingAccountIds } },
+          select: { billingAccountId: true },
+        });
+        const existingIds = new Set(existingBillingAccounts.map((account) => account.billingAccountId));
+        const unknownIds = billingAccountIds.filter((billingAccountId) => !existingIds.has(billingAccountId));
+        if (unknownIds.length > 0) {
+          return badRequest(`Unknown Billing ID: ${unknownIds.join(', ')}`);
+        }
+      }
 
       const customer = await prisma.customer.findUnique({ where: { id: data.customerId } });
       if (!customer) return notFound('Customer');
+      if (!hasCustomerScope(context.auth, customer.id)) {
+        return forbidden('You do not have access to this customer');
+      }
 
       const allGroups = await prisma.skuGroup.findMany({ select: { id: true } });
       const discountRate = (1 - data.defaultDiscountPercent / 100).toFixed(4); // 4 decimal places to match @db.Decimal(5,4)
@@ -112,6 +142,8 @@ export const POST = withPermission(
             customerId: data.customerId,
             name: data.name,
             status: data.status,
+            priceBasis: data.priceBasis,
+            billingAccountIds,
           },
           include: { customer: { select: { id: true, name: true } } },
         });
@@ -141,6 +173,8 @@ export const POST = withPermission(
       await logCreate(context, 'pricing_lists', pricingList.id, {
         customerId: pricingList.customerId,
         name: pricingList.name,
+        priceBasis: pricingList.priceBasis,
+        billingAccountIds: pricingList.billingAccountIds,
         defaultDiscountPercent: data.defaultDiscountPercent,
         defaultGroupCount: allGroups.length,
       });
@@ -149,6 +183,8 @@ export const POST = withPermission(
         id: pricingList.id,
         name: pricingList.name,
         status: pricingList.status,
+        priceBasis: pricingList.priceBasis,
+        billingAccountIds: pricingList.billingAccountIds,
         isActive: pricingList.status === 'ACTIVE',
         customer: pricingList.customer,
         defaultDiscountPercent: data.defaultDiscountPercent,

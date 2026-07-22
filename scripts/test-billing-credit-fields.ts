@@ -30,6 +30,7 @@ const expectedCreditTypes = [
   'COMMITTED_USAGE_DISCOUNT',
   'COMMITTED_USAGE_DISCOUNT_DOLLAR_BASE',
   'PROMOTION',
+  'SUBSCRIPTION_BENEFIT',
 ];
 
 const expectedBillingFields = [
@@ -81,6 +82,34 @@ const expectedCostHeaders = [
   '汇率',
 ];
 
+const expectedStandardHeaders = [
+  '公司名称',
+  '账单账号ID',
+  '标签',
+  '项目名称',
+  '项目ID',
+  '服务描述',
+  '服务ID',
+  'SKU描述',
+  'SKUid',
+  '资源名称',
+  '资源唯一标识符',
+  '使用开始时间',
+  '使用结束时间',
+  '使用量',
+  '用量单位',
+  '费用单位',
+  '列表价',
+  'Discount/Price',
+  '合同优惠金额',
+  '优惠后金额',
+  '代金券减免',
+  '最终付款金额',
+  '折后总金额(CNY,不含税)',
+  'transaction_type',
+  '收费类型',
+];
+
 const schema = read('prisma/schema.prisma');
 const creditTypeBlock = extractBlock(schema, /enum CreditType \{/);
 const billingLineItemBlock = extractBlock(schema, /model BillingLineItem \{/);
@@ -88,7 +117,12 @@ const billingLineItemBlock = extractBlock(schema, /model BillingLineItem \{/);
 for (const type of expectedCreditTypes) {
   assert(creditTypeBlock.includes(type), `CreditType is missing ${type}`);
 }
-assert(!creditTypeBlock.includes('SUBSCRIPTION_BENEFIT'), 'CreditType still contains SUBSCRIPTION_BENEFIT');
+assert(creditTypeBlock.includes('SUBSCRIPTION_BENEFIT'), 'CreditType is missing SUBSCRIPTION_BENEFIT');
+
+const projectBillingConfigBlock = extractBlock(schema, /model ProjectBillingConfig \{/);
+assert(projectBillingConfigBlock.includes('chargeType'), 'ProjectBillingConfig is missing chargeType');
+const pricingListBlock = extractBlock(schema, /model PricingList \{/);
+assert(pricingListBlock.includes('billingAccountIds'), 'PricingList is missing billingAccountIds');
 
 for (const field of expectedBillingFields) {
   assert(billingLineItemBlock.includes(field), `BillingLineItem is missing ${field}`);
@@ -108,8 +142,12 @@ const xlsxExporter = read('src/lib/invoice-presentation/exporters/xlsx.ts');
 for (const header of expectedCostHeaders) {
   assert(monthlyTemplate.includes(`'${header}'`), `Monthly template is missing COST header ${header}`);
 }
-assert(!monthlyTemplate.includes("'资源名称'"), 'Monthly template still contains standard-version header 资源名称');
-assert(!monthlyTemplate.includes("'合同优惠金额'"), 'Monthly template still contains standard-version header 合同优惠金额');
+for (const header of expectedStandardHeaders) {
+  assert(monthlyTemplate.includes(`'${header}'`), `Monthly template is missing STANDARD header ${header}`);
+}
+assert(monthlyTemplate.includes('STANDARD_TEMPLATE_HEADERS'), 'Monthly template is missing STANDARD header set');
+assert(monthlyTemplate.includes('COST_TEMPLATE_HEADERS'), 'Monthly template is missing COST header set');
+assert(xlsxExporter.includes('STANDARD_TEMPLATE_HEADERS'), 'XLSX exporter does not select the STANDARD template');
 assert(xlsxExporter.includes('costAfterCredit'), 'XLSX exporter does not use costAfterCredit');
 assert(xlsxExporter.includes('buildOverrideTemplateRowsForMonth'), 'XLSX exporter does not prefer monthly overrides');
 
@@ -119,9 +157,26 @@ for (const fragment of [
   'createBillingMonthlyOverride',
   'findActiveBillingMonthlyOverride',
   'TEMPLATE_HEADERS',
+  'STANDARD_TEMPLATE_HEADERS',
+  '优惠后金额',
 ]) {
   assert(monthlyOverrideLib.includes(fragment), `Monthly override library is missing ${fragment}`);
 }
+
+const monthlyLinesRoute = read('src/app/api/billing/monthly-lines/route.ts');
+const monthlyExportRoute = read('src/app/api/billing/monthly-lines/export/route.ts');
+for (const route of [monthlyLinesRoute, monthlyExportRoute]) {
+  assert(route.includes('hasCustomerScope'), 'Monthly billing route must validate requested customer scope');
+  assert(route.includes('getCustomerScopes'), 'Monthly billing route must scope all-customer queries');
+}
+assert(
+  xlsxExporter.includes('MixedMonthlyBillingTemplateError'),
+  'Mixed STANDARD/COST customer output must not use a misleading shared template'
+);
+assert(
+  xlsxExporter.includes('MonthlyBillingCustomerSelectionError'),
+  'Month-wide overrides must require selecting a customer before template projection'
+);
 
 const overrideRoute = read('src/app/api/billing/monthly-lines/overrides/route.ts');
 for (const fragment of [
@@ -163,7 +218,7 @@ const validation = read('src/lib/utils/validation.ts');
 for (const type of expectedCreditTypes) {
   assert(validation.includes(`'${type}'`), `Validation schema is missing ${type}`);
 }
-assert(!validation.includes("'SUBSCRIPTION_BENEFIT'"), 'Validation schema still allows SUBSCRIPTION_BENEFIT');
+assert(validation.includes("'SUBSCRIPTION_BENEFIT'"), 'Validation schema is missing SUBSCRIPTION_BENEFIT');
 for (const field of ['matchSkuId', 'matchSkuGroupId', 'matchProjectId']) {
   assert(validation.includes(field), `Credit validation is missing ${field}`);
 }
@@ -175,7 +230,7 @@ for (const field of ['matchSkuId', 'matchSkuGroupId', 'matchProjectId', 'matchSk
 
 const customerCreditsTab = read('src/components/admin/CustomerCreditsTab.tsx');
 assert(customerCreditsTab.includes('FEE_UTILIZATION_OFFSET'), 'Customer credits UI is missing FEE_UTILIZATION_OFFSET');
-assert(!customerCreditsTab.includes('SUBSCRIPTION_BENEFIT'), 'Customer credits UI still contains SUBSCRIPTION_BENEFIT');
+assert(customerCreditsTab.includes('SUBSCRIPTION_BENEFIT'), 'Customer credits UI is missing SUBSCRIPTION_BENEFIT');
 
 const monthlyBillingPage = read('src/app/(console)/admin/monthly-billing/page.tsx');
 for (const fragment of ['handleUploadOverride', 'Override', 'Upload']) {

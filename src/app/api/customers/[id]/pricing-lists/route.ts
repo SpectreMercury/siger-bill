@@ -12,8 +12,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { withPermissionAndScope } from '@/lib/middleware';
 import { logCreate } from '@/lib/audit';
+import { normalizePricingBillingAccountIds } from '@/lib/pricing/billing-account-scope';
 import {
-  validateBody,
   createPricingListSchema,
   paginationSchema,
   validationError,
@@ -85,6 +85,9 @@ export const GET = withPermissionAndScope(
         id: pl.id,
         name: pl.name,
         status: pl.status,
+        priceBasis: pl.priceBasis,
+        billingAccountIds: pl.billingAccountIds,
+        isActive: pl.status === 'ACTIVE',
         ruleCount: pl._count.pricingRules,
         createdAt: pl.createdAt,
         updatedAt: pl.updatedAt,
@@ -134,21 +137,53 @@ export const POST = withPermissionAndScope(
         return notFound('Customer');
       }
 
-      // Validate request body
-      const validation = await validateBody(request, createPricingListSchema);
+      // Validate request body. The route parameter is the source of truth for
+      // customer scope, so callers do not need to repeat customerId.
+      const body = await request.json();
+      const validation = createPricingListSchema.safeParse({
+        ...body,
+        customerId,
+      });
       if (!validation.success) {
         return validationError(validation.error);
       }
 
-      const { name, status } = validation.data;
+      const { name, status, priceBasis, defaultDiscountPercent } = validation.data;
+      const billingAccountIds = normalizePricingBillingAccountIds(
+        validation.data.billingAccountIds
+      );
+      const allGroups = await prisma.skuGroup.findMany({ select: { id: true } });
+      const discountRate = (1 - defaultDiscountPercent / 100).toFixed(4);
 
-      // Create pricing list
-      const pricingList = await prisma.pricingList.create({
-        data: {
-          customerId,
-          name,
-          status,
-        },
+      // Create the list and its required default rule atomically.
+      const pricingList = await prisma.$transaction(async (tx) => {
+        const list = await tx.pricingList.create({
+          data: {
+            customerId,
+            name,
+            status,
+            priceBasis,
+            billingAccountIds,
+          },
+        });
+        const defaultRule = await tx.pricingRule.create({
+          data: {
+            pricingListId: list.id,
+            isDefault: true,
+            ruleType: 'LIST_DISCOUNT',
+            discountRate,
+          },
+        });
+        if (allGroups.length > 0) {
+          await tx.pricingRuleSkuGroup.createMany({
+            data: allGroups.map((group) => ({
+              pricingRuleId: defaultRule.id,
+              skuGroupId: group.id,
+              pricingListId: list.id,
+            })),
+          });
+        }
+        return list;
       });
 
       // Audit log
@@ -157,6 +192,10 @@ export const POST = withPermissionAndScope(
         customerName: customer.name,
         name,
         status,
+        priceBasis,
+        billingAccountIds,
+        defaultDiscountPercent,
+        defaultGroupCount: allGroups.length,
       });
 
       return created({
@@ -165,6 +204,8 @@ export const POST = withPermissionAndScope(
           id: pricingList.id,
           name: pricingList.name,
           status: pricingList.status,
+          priceBasis: pricingList.priceBasis,
+          billingAccountIds: pricingList.billingAccountIds,
           createdAt: pricingList.createdAt,
         },
         customer: {

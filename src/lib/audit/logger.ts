@@ -22,15 +22,24 @@ interface AuditLogParams {
   metadata?: Record<string, unknown>;
 }
 
+type AuditLogClient = Pick<Prisma.TransactionClient, 'auditLog'>;
+
+interface AuditWriteOptions {
+  db?: AuditLogClient;
+  strict?: boolean;
+}
+
 /**
  * Log an audit event using request context
  */
 export async function logAuditEvent(
   context: RequestContext,
-  params: AuditLogParams
+  params: AuditLogParams,
+  options?: AuditWriteOptions
 ): Promise<void> {
   try {
-    await prisma.auditLog.create({
+    const db = options?.db ?? prisma;
+    await db.auditLog.create({
       data: {
         actorId: context.auth.userId,
         action: params.action,
@@ -47,7 +56,9 @@ export async function logAuditEvent(
       },
     });
   } catch (error) {
-    // Log to console but don't fail the request
+    if (options?.strict) throw error;
+    // Most callers retain best-effort logging for backwards compatibility.
+    // Money-changing operations pass strict=true inside their DB transaction.
     console.error('Failed to write audit log:', error);
   }
 }
@@ -296,7 +307,8 @@ export async function logCreditUpdate(
   context: RequestContext,
   creditId: string,
   beforeData: Record<string, unknown>,
-  afterData: Record<string, unknown>
+  afterData: Record<string, unknown>,
+  options?: AuditWriteOptions
 ): Promise<void> {
   return logAuditEvent(context, {
     action: AuditAction.CREDIT_UPDATE,
@@ -304,7 +316,7 @@ export async function logCreditUpdate(
     targetId: creditId,
     beforeData,
     afterData,
-  });
+  }, options);
 }
 
 /**

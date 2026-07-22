@@ -17,9 +17,15 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { Prisma, ProjectChargeType } from '@prisma/client';
 import { prisma } from '@/lib/db';
+import { getCustomerScopes, hasCustomerScope } from '@/lib/auth/context';
 import { withPermission } from '@/lib/middleware';
 import { logCreate } from '@/lib/audit';
+import {
+  chargeTypeToBillable,
+  PROJECT_CHARGE_TYPES,
+} from '@/lib/project-billing-configs/charge-type';
 import {
   paginationSchema,
   validateBody,
@@ -28,13 +34,17 @@ import {
   created,
   serverError,
   conflict,
+  notFound,
+  forbidden,
 } from '@/lib/utils';
 
 const createSchema = z.object({
   projectId: z.string().trim().min(1).max(100),
   name: z.string().trim().max(255).optional().nullable(),
-  billable: z.boolean().default(true),
+  chargeType: z.enum(PROJECT_CHARGE_TYPES).optional(),
+  billable: z.boolean().optional(),
   billingAccountId: z.string().uuid().optional().nullable(),
+  customerId: z.string().uuid().optional().nullable(),
 });
 
 const operatorSelect = { id: true, firstName: true, lastName: true, email: true } as const;
@@ -45,6 +55,7 @@ type ConfigRow = {
   projectId: string;
   name: string | null;
   billable: boolean;
+  chargeType: ProjectChargeType;
   billingAccount: { id: string; billingAccountId: string; name: string | null } | null;
   createdAt: Date;
   updatedAt: Date;
@@ -66,6 +77,7 @@ function mapConfig(
     projectId: c.projectId,
     name: c.name,
     billable: c.billable,
+    chargeType: c.chargeType,
     billingAccount: c.billingAccount,
     boundCustomers,
     createdBy: c.creator,
@@ -77,7 +89,7 @@ function mapConfig(
 
 export const GET = withPermission(
   { resource: 'project_billing_configs', action: 'list' },
-  async (request: NextRequest): Promise<NextResponse> => {
+  async (request: NextRequest, context): Promise<NextResponse> => {
     try {
       const { searchParams } = new URL(request.url);
       const pagination = paginationSchema.safeParse({
@@ -88,10 +100,11 @@ export const GET = withPermission(
       const limit = pagination.success ? pagination.data.limit : 50;
       const skip = (page - 1) * limit;
 
-      const where: Record<string, unknown> = {};
+      const where: Prisma.ProjectBillingConfigWhereInput = {};
       const projectId = searchParams.get('projectId');
       const billingAccountId = searchParams.get('billingAccountId');
       const search = searchParams.get('search');
+      const chargeType = searchParams.get('chargeType');
       // `customerIds` is comma-separated. Bridges through CustomerProject:
       // we resolve each customer's currently-active project bindings and
       // narrow PBC to projects bound to at least one of those customers.
@@ -99,6 +112,9 @@ export const GET = withPermission(
 
       if (projectId) where.projectId = projectId;
       if (billingAccountId) where.billingAccountId = billingAccountId;
+      if (chargeType && PROJECT_CHARGE_TYPES.includes(chargeType as ProjectChargeType)) {
+        where.chargeType = chargeType as ProjectChargeType;
+      }
       if (search) {
         where.OR = [
           { projectId: { contains: search, mode: 'insensitive' } },
@@ -106,36 +122,28 @@ export const GET = withPermission(
         ];
       }
 
-      if (customerIdsParam) {
-        const customerIds = customerIdsParam
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
-        if (customerIds.length > 0) {
-          const bindings = await prisma.customerProject.findMany({
-            where: { customerId: { in: customerIds }, isActive: true },
-            select: { projectId: true },
-          });
-          const allowedProjectIds = Array.from(new Set(bindings.map((b) => b.projectId)));
-          if (allowedProjectIds.length === 0) {
-            // No bindings → empty result set without hitting PBC.
-            return success({
-              data: [],
-              pagination: { page, limit, total: 0, totalPages: 0 },
-            });
-          }
-          // Compose with any existing projectId filter (single id) safely.
-          if (typeof where.projectId === 'string') {
-            if (!allowedProjectIds.includes(where.projectId)) {
-              return success({
-                data: [],
-                pagination: { page, limit, total: 0, totalPages: 0 },
-              });
-            }
-          } else {
-            where.projectId = { in: allowedProjectIds };
-          }
-        }
+      const requestedCustomerIds = customerIdsParam
+        ? customerIdsParam.split(',').map((value) => value.trim()).filter(Boolean)
+        : [];
+      if (
+        !context.auth.isSuperAdmin
+        && requestedCustomerIds.some((customerId) => !hasCustomerScope(context.auth, customerId))
+      ) {
+        return forbidden('You do not have access to one or more selected customers');
+      }
+      const scopedCustomerIds = context.auth.isSuperAdmin
+        ? undefined
+        : getCustomerScopes(context.auth);
+      const effectiveCustomerIds = requestedCustomerIds.length > 0
+        ? requestedCustomerIds
+        : scopedCustomerIds;
+      if (effectiveCustomerIds) {
+        where.customerProjects = {
+          some: {
+            customerId: { in: effectiveCustomerIds },
+            isActive: true,
+          },
+        };
       }
 
       const [rows, total] = await Promise.all([
@@ -157,7 +165,11 @@ export const GET = withPermission(
       const bindings = projectIds.length === 0
         ? []
         : await prisma.customerProject.findMany({
-            where: { projectId: { in: projectIds }, isActive: true },
+            where: {
+              projectId: { in: projectIds },
+              isActive: true,
+              ...(scopedCustomerIds ? { customerId: { in: scopedCustomerIds } } : {}),
+            },
             select: {
               projectId: true,
               startDate: true,
@@ -199,7 +211,12 @@ export const POST = withPermission(
     try {
       const validation = await validateBody(request, createSchema);
       if (!validation.success) return validationError(validation.error);
-      const { projectId, name, billable, billingAccountId } = validation.data;
+      const { projectId, name, billingAccountId, customerId } = validation.data;
+      const chargeType = validation.data.chargeType
+        ?? (validation.data.billable === false
+          ? ProjectChargeType.NON_BILLABLE
+          : ProjectChargeType.BILLABLE);
+      const billable = chargeTypeToBillable(chargeType);
 
       const existing = await prisma.projectBillingConfig.findUnique({
         where: { projectId },
@@ -211,30 +228,76 @@ export const POST = withPermission(
         });
       }
 
-      const row = await prisma.projectBillingConfig.create({
-        data: {
-          projectId,
-          name: name ?? null,
-          billable,
-          billingAccountId: billingAccountId ?? null,
-          createdBy: context.auth.userId,
-          updatedBy: context.auth.userId,
-        },
-        include: {
-          billingAccount: { select: billingAccountSelect },
-          creator: { select: operatorSelect },
-          updater: { select: operatorSelect },
-        },
+      const customer = customerId
+        ? await prisma.customer.findUnique({
+            where: { id: customerId },
+            select: { id: true, name: true },
+          })
+        : null;
+      if (customerId && !customer) return notFound('Customer');
+      if (customer && !hasCustomerScope(context.auth, customer.id)) {
+        return forbidden('You do not have access to this customer');
+      }
+
+      const billingAccount = billingAccountId
+        ? await prisma.billingAccount.findUnique({
+            where: { id: billingAccountId },
+            select: { id: true },
+          })
+        : null;
+      if (billingAccountId && !billingAccount) {
+        return notFound('Billing account');
+      }
+
+      const row = await prisma.$transaction(async (tx) => {
+        const createdRow = await tx.projectBillingConfig.create({
+          data: {
+            projectId,
+            name: name ?? null,
+            billable,
+            chargeType,
+            billingAccountId: billingAccountId ?? null,
+            createdBy: context.auth.userId,
+            updatedBy: context.auth.userId,
+          },
+          include: {
+            billingAccount: { select: billingAccountSelect },
+            creator: { select: operatorSelect },
+            updater: { select: operatorSelect },
+          },
+        });
+        if (customer) {
+          await tx.customerProject.create({
+            data: {
+              customerId: customer.id,
+              projectId,
+              isActive: true,
+              startDate: new Date(),
+            },
+          });
+        }
+        return createdRow;
       });
 
       await logCreate(context, 'project_billing_configs', row.id, {
         projectId,
         name,
         billable,
+        chargeType,
         billingAccountId,
+        customerId: customer?.id ?? null,
+        customerName: customer?.name ?? null,
       });
 
-      return created({ message: 'Project registered', config: mapConfig(row) });
+      return created({
+        message: 'Project registered',
+        config: mapConfig(row, customer ? [{
+          customerId: customer.id,
+          customerName: customer.name,
+          startDate: new Date(),
+          endDate: null,
+        }] : []),
+      });
     } catch (error) {
       console.error('Failed to create project billing config:', error);
       return serverError('Failed to create config');
