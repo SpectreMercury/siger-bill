@@ -315,7 +315,7 @@ async function buildBillingTemplateRows(invoiceId: string): Promise<{
         include: {
           customerProjects: {
             where: { isActive: true },
-            select: { projectId: true, startDate: true, endDate: true },
+            select: { projectId: true },
           },
         },
       },
@@ -338,13 +338,9 @@ async function buildBillingTemplateRows(invoiceId: string): Promise<{
   const [year, month] = invoice.billingMonth.split('-').map(Number);
   const monthStart = new Date(Date.UTC(year, month - 1, 1));
   const monthEnd = new Date(Date.UTC(year, month, 1));
-  const activeProjectIds = invoice.customer.customerProjects
-    .filter((binding) => {
-      const start = binding.startDate ?? new Date(0);
-      const end = binding.endDate ?? new Date('2100-01-01');
-      return start < monthEnd && end >= monthStart;
-    })
-    .map((binding) => binding.projectId);
+  const activeProjectIds = invoice.customer.customerProjects.map(
+    (binding) => binding.projectId
+  );
 
   const loadedLineItems = await loadMergedBillingGroups({
     billingMonth: invoice.billingMonth,
@@ -427,13 +423,9 @@ type TemplateBuildOptions = {
 };
 
 async function getActiveProjectCustomers(
-  billingMonth: string,
   customerId?: string,
   customerIds?: string[]
 ): Promise<Map<string, CustomerForTemplate>> {
-  const [year, month] = billingMonth.split('-').map(Number);
-  const monthStart = new Date(Date.UTC(year, month - 1, 1));
-  const monthEnd = new Date(Date.UTC(year, month, 1));
   const bindings = await prisma.customerProject.findMany({
     where: {
       isActive: true,
@@ -442,10 +434,6 @@ async function getActiveProjectCustomers(
         : customerIds
           ? { customerId: { in: customerIds } }
           : {}),
-      AND: [
-        { OR: [{ startDate: null }, { startDate: { lt: monthEnd } }] },
-        { OR: [{ endDate: null }, { endDate: { gte: monthStart } }] },
-      ],
     },
     select: {
       projectId: true,
@@ -761,7 +749,6 @@ export async function buildBillingTemplateRowsForMonth(
   }
 
   const projectCustomers = await getActiveProjectCustomers(
-    options.billingMonth,
     options.customerId,
     options.customerIds
   );

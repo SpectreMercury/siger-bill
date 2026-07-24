@@ -84,14 +84,6 @@ export async function getBillingMonthLockReason(
   return null;
 }
 
-function billingMonthRange(billingMonth: string): { monthStart: Date; monthEnd: Date } {
-  const [year, month] = billingMonth.split('-').map(Number);
-  return {
-    monthStart: new Date(Date.UTC(year, month - 1, 1)),
-    monthEnd: new Date(Date.UTC(year, month, 1)),
-  };
-}
-
 function sourceLabelFromMetadata(
   sourceMetadata: Prisma.JsonValue | null,
   batchId: string
@@ -109,30 +101,14 @@ function sourceLabelFromMetadata(
 }
 
 async function findProjectIdsForCustomers(
-  billingMonth: string,
   customerIds?: string[]
-): Promise<string[] | null> {
-  if (!customerIds || customerIds.length === 0) return null;
+): Promise<string[]> {
+  if (customerIds?.length === 0) return [];
 
-  const { monthStart, monthEnd } = billingMonthRange(billingMonth);
   const bindings = await prisma.customerProject.findMany({
     where: {
-      customerId: { in: customerIds },
       isActive: true,
-      AND: [
-        {
-          OR: [
-            { startDate: null },
-            { startDate: { lt: monthEnd } },
-          ],
-        },
-        {
-          OR: [
-            { endDate: null },
-            { endDate: { gte: monthStart } },
-          ],
-        },
-      ],
+      ...(customerIds ? { customerId: { in: customerIds } } : {}),
     },
     select: { projectId: true },
   });
@@ -144,14 +120,14 @@ export async function findActiveBigQueryProjectOverlaps(
   billingMonth: string,
   options: { customerIds?: string[] } = {}
 ): Promise<BigQueryProjectOverlap[]> {
-  const projectIds = await findProjectIdsForCustomers(billingMonth, options.customerIds);
-  if (projectIds && projectIds.length === 0) return [];
+  const projectIds = await findProjectIdsForCustomers(options.customerIds);
+  if (projectIds.length === 0) return [];
 
   const where: Prisma.BillingLineItemWhereInput = {
     provider: BillingProvider.GCP,
     sourceType: BillingSourceType.BIGQUERY_EXPORT,
     invoiceMonth: billingMonth,
-    subaccountId: projectIds ? { in: projectIds } : { not: null },
+    subaccountId: { in: projectIds },
     ingestionBatch: { isActive: true },
   };
 

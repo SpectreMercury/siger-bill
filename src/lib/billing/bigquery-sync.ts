@@ -309,7 +309,7 @@ export async function runBigQueryBillingSync(
 
   const sourceConflicts = await findActiveBigQueryProjectOverlaps(
     billingMonth,
-    affectedCustomerIds.length > 0 ? { customerIds: affectedCustomerIds } : {}
+    { customerIds: affectedCustomerIds }
   );
   const totalRows = results.reduce((sum, result) => sum + result.rowCount, 0);
 

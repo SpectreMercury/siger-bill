@@ -141,23 +141,6 @@ async function generateInvoiceNumberSafe(
 }
 
 /**
- * Check if a customer-project binding overlaps with the billing month
- */
-function bindingOverlapsBillingMonth(
-  binding: { startDate: Date | null; endDate: Date | null },
-  startOfMonth: Date,
-  endOfMonth: Date
-): boolean {
-  // If no start date, assume it started before the billing period
-  const bindingStart = binding.startDate ?? new Date(0);
-  // If no end date, assume it's still active
-  const bindingEnd = binding.endDate ?? new Date('2100-01-01');
-
-  // Check overlap: binding starts before month ends AND binding ends after month starts
-  return bindingStart < endOfMonth && bindingEnd >= startOfMonth;
-}
-
-/**
  * Calculate due date based on payment terms
  */
 function calculateDueDate(paymentTermsDays: number): Date {
@@ -275,11 +258,7 @@ export async function executeInvoiceRun(
       include: {
         customerProjects: {
           where: { isActive: true },
-          select: {
-            projectId: true,
-            startDate: true,
-            endDate: true,
-          },
+          select: { projectId: true },
         },
       },
     });
@@ -290,16 +269,7 @@ export async function executeInvoiceRun(
     // Process each customer
     for (const customer of customers) {
       try {
-        // Filter bindings that overlap with billing month
-        const activeBindings = customer.customerProjects.filter((cp) =>
-          bindingOverlapsBillingMonth(cp, startOfMonth, endOfMonth)
-        );
-
-        if (activeBindings.length === 0) {
-          continue;
-        }
-
-        const projectIds = activeBindings.map((cp) => cp.projectId);
+        const projectIds = customer.customerProjects.map((cp) => cp.projectId);
         projectIds.forEach((p) => allProjectIds.add(p));
 
         const pricingBillingAccountIds = await loadActivePricingBillingAccountIds(customer.id);

@@ -19,6 +19,7 @@
     "db:studio": "prisma studio",
     "test:customer-validation": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-customer-validation.ts",
     "test:billing-active-source": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-billing-active-source.ts",
+    "test:billing-project-bindings": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-billing-project-binding-dates.ts",
     "test:credit-validation": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-credit-optional-amount.ts",
     "test:credit-update": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-credit-update.ts",
     "test:credit-application": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-credit-application.ts",

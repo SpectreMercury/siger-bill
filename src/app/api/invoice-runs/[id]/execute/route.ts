@@ -188,7 +188,7 @@ export const POST = withPermission(
 
         sourceConflicts = await findActiveBigQueryProjectOverlaps(
           invoiceRun.billingMonth,
-          affectedCustomerIds.length > 0 ? { customerIds: affectedCustomerIds } : {}
+          { customerIds: affectedCustomerIds }
         );
         if (sourceConflicts.length > 0) {
           return NextResponse.json(
