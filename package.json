@@ -23,6 +23,7 @@
     "test:credit-validation": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-credit-optional-amount.ts",
     "test:credit-update": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-credit-update.ts",
     "test:credit-application": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-credit-application.ts",
+    "test:gcp-credit-types": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-gcp-credit-type-preservation.ts",
     "test:monthly-billing-template": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-monthly-billing-template.ts",
     "test:monthly-billing-live": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-monthly-billing-live.ts",
     "test:billing-sync-lifecycle": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-billing-sync-job-lifecycle.ts",

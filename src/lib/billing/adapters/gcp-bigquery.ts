@@ -269,67 +269,68 @@ export class GcpBigQueryAdapter implements BillingSourceAdapter {
     }
 
     const query = `
+      WITH grouped AS (
+        SELECT
+          billing.billing_account_id,
+          ANY_VALUE(billing.service) AS service,
+          ANY_VALUE(billing.sku) AS sku,
+          MIN(billing.usage_start_time) AS usage_start_time,
+          MAX(billing.usage_end_time) AS usage_end_time,
+          ANY_VALUE(billing.project) AS project,
+          ANY_VALUE(billing.labels) AS labels,
+          ANY_VALUE(billing.system_labels) AS system_labels,
+          ANY_VALUE(billing.location) AS location,
+          CAST(NULL AS STRUCT<name STRING, global_name STRING>) AS resource,
+          STRUCT(
+            SUM(billing.usage.amount) AS amount,
+            ANY_VALUE(billing.usage.unit) AS unit,
+            SUM(billing.usage.amount_in_pricing_units) AS amount_in_pricing_units,
+            ANY_VALUE(billing.usage.pricing_unit) AS pricing_unit
+          ) AS usage,
+          SUM(billing.cost) AS cost,
+          SUM(billing.cost_at_list) AS cost_at_list,
+          billing.currency,
+          billing.currency_conversion_rate,
+          STRUCT(billing.invoice.month AS month) AS invoice,
+          billing.cost_type,
+          billing.transaction_type,
+          ANY_VALUE(billing.adjustment_info) AS adjustment_info,
+          ARRAY_CONCAT_AGG(IFNULL(billing.credits, [])) AS credit_entries
+        FROM \`${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}\` AS billing
+        WHERE billing.invoice.month = @invoiceMonth
+          ${accountFilter}
+        GROUP BY
+          billing.billing_account_id,
+          billing.project.id,
+          billing.service.id,
+          billing.service.description,
+          billing.sku.id,
+          billing.sku.description,
+          billing.currency,
+          billing.currency_conversion_rate,
+          billing.invoice.month,
+          billing.cost_type,
+          billing.transaction_type,
+          billing.location.region,
+          billing.usage.unit,
+          billing.usage.pricing_unit,
+          TO_JSON_STRING(billing.adjustment_info)
+      )
       SELECT
-        billing.billing_account_id,
-        ANY_VALUE(billing.service) AS service,
-        ANY_VALUE(billing.sku) AS sku,
-        MIN(billing.usage_start_time) AS usage_start_time,
-        MAX(billing.usage_end_time) AS usage_end_time,
-        ANY_VALUE(billing.project) AS project,
-        ANY_VALUE(billing.labels) AS labels,
-        ANY_VALUE(billing.system_labels) AS system_labels,
-        ANY_VALUE(billing.location) AS location,
-        CAST(NULL AS STRUCT<name STRING, global_name STRING>) AS resource,
-        STRUCT(
-          SUM(billing.usage.amount) AS amount,
-          ANY_VALUE(billing.usage.unit) AS unit,
-          SUM(billing.usage.amount_in_pricing_units) AS amount_in_pricing_units,
-          ANY_VALUE(billing.usage.pricing_unit) AS pricing_unit
-        ) AS usage,
-        SUM(billing.cost) AS cost,
-        SUM(billing.cost_at_list) AS cost_at_list,
-        billing.currency,
-        billing.currency_conversion_rate,
-        IF(
-          SUM((
-            SELECT COALESCE(SUM(credit.amount), 0)
-            FROM UNNEST(IFNULL(billing.credits, [])) AS credit
-          )) = 0,
-          ARRAY<STRUCT<name STRING, amount FLOAT64, full_name STRING, id STRING, type STRING>>[],
-          [STRUCT(
-            'Aggregated credits' AS name,
-            CAST(SUM((
-              SELECT COALESCE(SUM(credit.amount), 0)
-              FROM UNNEST(IFNULL(billing.credits, [])) AS credit
-            )) AS FLOAT64) AS amount,
-            'Aggregated credits for monthly project/SKU group' AS full_name,
-            'aggregated' AS id,
-            'AGGREGATED' AS type
-          )]
-        ) AS credits,
-        STRUCT(billing.invoice.month AS month) AS invoice,
-        billing.cost_type,
-        billing.transaction_type,
-        ANY_VALUE(billing.adjustment_info) AS adjustment_info
-      FROM \`${this.config.projectId}.${this.config.datasetId}.${this.config.tableName}\` AS billing
-      WHERE billing.invoice.month = @invoiceMonth
-        ${accountFilter}
-      GROUP BY
-        billing.billing_account_id,
-        billing.project.id,
-        billing.service.id,
-        billing.service.description,
-        billing.sku.id,
-        billing.sku.description,
-        billing.currency,
-        billing.currency_conversion_rate,
-        billing.invoice.month,
-        billing.cost_type,
-        billing.transaction_type,
-        billing.location.region,
-        billing.usage.unit,
-        billing.usage.pricing_unit,
-        TO_JSON_STRING(billing.adjustment_info)
+        grouped.* EXCEPT (credit_entries),
+        ARRAY(
+          SELECT AS STRUCT
+            CONCAT('Aggregated ', credit.type, ' credits') AS name,
+            CAST(SUM(credit.amount) AS FLOAT64) AS amount,
+            CONCAT('Aggregated ', credit.type, ' credits for monthly project/SKU group') AS full_name,
+            CONCAT('aggregated:', credit.type) AS id,
+            credit.type AS type
+          FROM UNNEST(grouped.credit_entries) AS credit
+          GROUP BY credit.type
+          HAVING SUM(credit.amount) != 0
+          ORDER BY credit.type
+        ) AS credits
+      FROM grouped
       ORDER BY usage_start_time
     `;
 
