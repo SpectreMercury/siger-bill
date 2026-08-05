@@ -18,6 +18,11 @@ import {
   MixedMonthlyBillingTemplateError,
 } from '@/lib/invoice-presentation/exporters/xlsx';
 import { generateContentHash } from '@/lib/invoice-presentation/builder';
+import { prisma } from '@/lib/db';
+import {
+  buildMonthlyBillingExportContentDisposition,
+  buildMonthlyBillingExportFilename,
+} from '@/lib/billing/monthly-export';
 
 export const GET = withPermission(
   { resource: 'raw_cost', action: 'list' },
@@ -42,20 +47,25 @@ export const GET = withPermission(
         ? getCustomerScopes(context.auth)
         : undefined;
 
-      const result = await buildBillingTemplateRowsForMonth({
-        billingMonth,
-        priceBasis: priceBasis ?? undefined,
-        customerId,
-        customerIds,
-        all: true,
-      });
+      const [result, customer] = await Promise.all([
+        buildBillingTemplateRowsForMonth({
+          billingMonth,
+          priceBasis: priceBasis ?? undefined,
+          customerId,
+          customerIds,
+          all: true,
+        }),
+        customerId
+          ? prisma.customer.findUnique({ where: { id: customerId }, select: { name: true } })
+          : Promise.resolve(null),
+      ]);
       const content = generateXLSXContent(result.rows);
       const hash = generateContentHash(content);
-      const filename = `billing-${billingMonth}-${(priceBasis ?? PricingBasis.COST).toLowerCase()}${customerId ? `-${customerId}` : ''}.xlsx`;
+      const filename = buildMonthlyBillingExportFilename(billingMonth, customer?.name);
 
       const headers = new Headers();
       headers.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      headers.set('Content-Disposition', `attachment; filename="${filename}"`);
+      headers.set('Content-Disposition', buildMonthlyBillingExportContentDisposition(filename));
       headers.set('Content-Length', content.length.toString());
       headers.set('X-Content-Hash', hash);
       headers.set('X-Row-Count', result.total.toString());
