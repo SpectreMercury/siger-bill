@@ -13,6 +13,10 @@ import { Label } from '@/components/ui/shadcn/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/shadcn/select';
 import { Badge } from '@/components/ui/shadcn/badge';
 import { CloudDownload, Download, Loader2, RotateCcw, Upload } from 'lucide-react';
+import {
+  buildMonthlyBillingExportFilename,
+  filenameFromContentDisposition,
+} from '@/lib/billing/monthly-export';
 
 type BillingCell = string | number | null;
 
@@ -196,7 +200,9 @@ export default function MonthlyBillingPage() {
 
       const blob = await response.blob();
       const disposition = response.headers.get('content-disposition');
-      const filename = disposition?.match(/filename="([^"]+)"/)?.[1] || `billing-${billingMonth}.xlsx`;
+      const customerName = customers.find((customer) => customer.id === selectedCustomerId)?.name;
+      const filename = filenameFromContentDisposition(disposition)
+        || buildMonthlyBillingExportFilename(billingMonth, customerName);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;

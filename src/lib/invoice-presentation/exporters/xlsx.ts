@@ -113,12 +113,12 @@ function selectRule(
   return effectiveRules.find((rule) => rule.isDefault) ?? null;
 }
 
-function discountLabel(
+export function formatDiscountPriceLabel(
   rule: PricingRuleForExport | null,
   priceBasis: PricingBasis,
   multiplier: Prisma.Decimal
 ): string {
-  const base = priceBasis === PricingBasis.STANDARD ? 'List' : 'Cost';
+  const base = priceBasis === PricingBasis.STANDARD ? 'List Price' : 'Cost';
   if (!rule) return `${base} * 100%`;
   if (rule.ruleType === 'LIST_DISCOUNT' && rule.discountRate != null) {
     return `${base} * ${rule.discountRate.mul(100).toDecimalPlaces(4).toString()}%`;
@@ -681,7 +681,7 @@ function buildTemplateDataRow(params: {
       item.pricingUsageUnit ?? item.usageUnit,
       item.currency,
       formatMoneyCell(listAmount),
-      discountLabel(rule, priceBasis, multiplier),
+      formatDiscountPriceLabel(rule, priceBasis, multiplier),
       formatMoneyCell(standardContractDiscount),
       formatMoneyCell(standardDiscountedAmount),
       formatMoneyCell(amounts.voucherAmount),
@@ -711,7 +711,7 @@ function buildTemplateDataRow(params: {
     formatMoneyCell(resellerCost),
     formatMoneyCell(amounts.voucherAmount),
     formatMoneyCell(amounts.amountAfterCredit),
-    discountLabel(rule, priceBasis, multiplier),
+    formatDiscountPriceLabel(rule, priceBasis, multiplier),
     formatMoneyCell(finalAmount),
     formatMoneyCell(cnyAmount),
     item.transactionType ?? '',

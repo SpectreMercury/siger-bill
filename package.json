@@ -26,6 +26,7 @@
     "test:gcp-credit-types": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-gcp-credit-type-preservation.ts",
     "test:monthly-billing-template": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-monthly-billing-template.ts",
     "test:monthly-billing-live": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-monthly-billing-live.ts",
+    "test:monthly-billing-export-format": "ts-node -r tsconfig-paths/register --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-monthly-billing-export-format.ts",
     "test:billing-sync-lifecycle": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-billing-sync-job-lifecycle.ts",
     "test:billing-sync-dispatch": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-billing-sync-dispatch.ts",
     "test:project-billing-import": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-project-billing-config-import.ts",
