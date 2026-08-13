@@ -225,6 +225,7 @@ export function calculateMonthlyBillingAmounts(params: {
   resellerCost: Prisma.Decimal;
   providerCreditAmount: Prisma.Decimal;
   multiplier: Prisma.Decimal;
+  discountedAmount?: Prisma.Decimal;
 }): {
   voucherAmount: Prisma.Decimal;
   amountAfterCredit: Prisma.Decimal;
@@ -233,14 +234,21 @@ export function calculateMonthlyBillingAmounts(params: {
   const baseAmount = params.priceBasis === 'STANDARD'
     ? params.listAmount
     : params.resellerCost;
-  const voucherAmount = params.providerCreditAmount;
+  const discountedAmount = params.discountedAmount ?? baseAmount.mul(params.multiplier);
+  // STANDARD invoices rebase the upstream BigQuery credit onto the amount
+  // billed to the customer: credit / provider cost * discounted amount.
+  const voucherAmount = params.priceBasis === 'STANDARD'
+    ? params.resellerCost.isZero()
+      ? new Prisma.Decimal(0)
+      : params.providerCreditAmount.div(params.resellerCost).mul(discountedAmount)
+    : params.providerCreditAmount;
   const amountAfterCredit = baseAmount.add(voucherAmount);
 
   return {
     voucherAmount,
     amountAfterCredit,
     finalAmount: params.priceBasis === 'STANDARD'
-      ? baseAmount.mul(params.multiplier).add(voucherAmount)
+      ? discountedAmount.add(voucherAmount)
       : amountAfterCredit.mul(params.multiplier),
   };
 }

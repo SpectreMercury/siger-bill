@@ -72,12 +72,34 @@ const differentBasesCost = calculateMonthlyBillingAmounts({
   providerCreditAmount: decimal('-20'),
   multiplier: decimal('0.9'),
 });
-assert.equal(differentBasesStandard.amountAfterCredit.toString(), '100');
+assert.equal(differentBasesStandard.amountAfterCredit.toString(), '98.4');
 assert.equal(differentBasesCost.amountAfterCredit.toString(), '80');
-assert.equal(differentBasesStandard.finalAmount.toString(), '88');
+assert.equal(differentBasesStandard.finalAmount.toString(), '86.4');
 assert.equal(differentBasesCost.finalAmount.toString(), '72');
-assert.equal(differentBasesStandard.voucherAmount.toString(), '-20');
+assert.equal(differentBasesStandard.voucherAmount.toString(), '-21.6');
 assert.equal(differentBasesCost.voucherAmount.toString(), '-20');
+
+const zeroProviderCost = calculateMonthlyBillingAmounts({
+  priceBasis: 'STANDARD',
+  listAmount: decimal('100'),
+  resellerCost: decimal('0'),
+  providerCreditAmount: decimal('-20'),
+  multiplier: decimal('0.9'),
+});
+assert.equal(zeroProviderCost.voucherAmount.toString(), '0');
+assert.equal(zeroProviderCost.finalAmount.toString(), '90');
+
+const unitPricedStandardInput = {
+  priceBasis: 'STANDARD',
+  listAmount: decimal('120'),
+  resellerCost: decimal('100'),
+  providerCreditAmount: decimal('-20'),
+  multiplier: decimal('1'),
+  discountedAmount: decimal('50'),
+} as const;
+const unitPricedStandard = calculateMonthlyBillingAmounts(unitPricedStandardInput);
+assert.equal(unitPricedStandard.voucherAmount.toString(), '-10');
+assert.equal(unitPricedStandard.finalAmount.toString(), '40');
 
 const seCreditAllocator = createMonthlyProviderCreditAllocator([{
   id: 'se-credit',

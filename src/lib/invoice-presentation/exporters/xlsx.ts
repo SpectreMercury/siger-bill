@@ -628,36 +628,44 @@ function buildTemplateDataRow(params: {
       ? rule.tiers as Array<{ from: number; to?: number | null; rate?: number | null }>
       : null,
   });
-  const amounts = calculateMonthlyBillingAmounts({
-    priceBasis,
-    listAmount,
-    resellerCost,
-    providerCreditAmount,
-    multiplier,
-  });
   const pricingUsageAmount = item.pricingUsageAmount ?? item.usageAmount;
   const isUnitPrice = rule?.ruleType === 'UNIT_PRICE' && rule.unitPrice != null;
   const unitPricedAmount = isUnitPrice ? pricingUsageAmount.mul(rule.unitPrice!) : null;
   const standardDiscountedAmount = isUnitPrice
     ? unitPricedAmount!
     : listAmount.mul(multiplier);
+  const amounts = calculateMonthlyBillingAmounts({
+    priceBasis,
+    listAmount,
+    resellerCost,
+    providerCreditAmount,
+    multiplier,
+    discountedAmount: priceBasis === PricingBasis.STANDARD
+      ? standardDiscountedAmount
+      : undefined,
+  });
   const standardContractDiscount = standardDiscountedAmount.sub(listAmount);
-  const finalAmount = isUnitPrice
-    ? unitPricedAmount!.add(providerCreditAmount)
-    : amounts.finalAmount;
+  const finalAmount = amounts.finalAmount;
 
-  const convertedCostAfterCredit = item.resellerCostConverted != null && providerCredit.convertedAmount != null
-    ? item.resellerCostConverted.add(providerCredit.convertedAmount)
+  const hasConvertedPricingBase = priceBasis === PricingBasis.STANDARD
+    ? item.listCostConverted != null
+      && (!isUnitPrice || item.pricingUsageAmountConverted != null)
+    : item.resellerCostConverted != null;
+  const convertedAmounts = hasConvertedPricingBase
+    && item.resellerCostConverted != null
+    && providerCredit.convertedAmount != null
+    ? calculateMonthlyBillingAmounts({
+        priceBasis,
+        listAmount: item.listCostConverted ?? new Prisma.Decimal(0),
+        resellerCost: item.resellerCostConverted,
+        providerCreditAmount: providerCredit.convertedAmount,
+        multiplier,
+        discountedAmount: priceBasis === PricingBasis.STANDARD && isUnitPrice
+          ? item.pricingUsageAmountConverted!.mul(rule.unitPrice!)
+          : undefined,
+      })
     : null;
-  const cnyAmount = isUnitPrice
-    ? item.pricingUsageAmountConverted != null && providerCredit.convertedAmount != null
-      ? item.pricingUsageAmountConverted.mul(rule.unitPrice!).add(providerCredit.convertedAmount)
-      : null
-    : priceBasis === PricingBasis.STANDARD
-      ? item.listCostConverted != null && providerCredit.convertedAmount != null
-        ? item.listCostConverted.mul(multiplier).add(providerCredit.convertedAmount)
-        : null
-      : convertedCostAfterCredit?.mul(multiplier) ?? null;
+  const cnyAmount = convertedAmounts?.finalAmount ?? null;
   const conversionRate = !finalAmount.isZero() && cnyAmount != null
     ? cnyAmount.div(finalAmount)
     : item.currencyConversionRate;
