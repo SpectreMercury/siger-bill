@@ -406,11 +406,35 @@ export const updateCreditSchema = z.object({
 /**
  * Special rule creation schema
  */
+export const nullProjectAttributionConfigItemSchema = z.object({
+  billingAccountId: z.string().trim().min(1).max(100),
+  skuIds: z.array(z.string().trim().min(1).max(100)).min(1),
+  projectId: z.string().trim().min(1).max(100),
+}).strict();
+
+export const nullProjectAttributionConfigSchema = z
+  .array(nullProjectAttributionConfigItemSchema)
+  .min(1);
+
+const specialRuleDateRangeIsValid = (data: {
+  effectiveStart?: string | null;
+  effectiveEnd?: string | null;
+}) => !data.effectiveStart
+  || !data.effectiveEnd
+  || data.effectiveStart <= data.effectiveEnd;
+
 export const createSpecialRuleSchema = z.object({
   name: z.string().min(1, 'Name is required').max(255),
   enabled: z.boolean().default(true),
   priority: z.number().int().min(0).max(9999).default(100),
-  ruleType: z.enum(['EXCLUDE_SKU', 'EXCLUDE_SKU_GROUP', 'OVERRIDE_COST', 'MOVE_TO_CUSTOMER']),
+  ruleType: z.enum([
+    'EXCLUDE_SKU',
+    'EXCLUDE_SKU_GROUP',
+    'OVERRIDE_COST',
+    'MOVE_TO_CUSTOMER',
+    'ASSIGN_NULL_PROJECT',
+  ]),
+  config: nullProjectAttributionConfigSchema.optional(),
   // Match conditions
   matchSkuId: z.string().max(100).optional().nullable(),
   matchSkuGroupId: z.string().uuid().optional().nullable(),
@@ -423,6 +447,21 @@ export const createSpecialRuleSchema = z.object({
   // Validity period
   effectiveStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional().nullable(),
   effectiveEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional().nullable(),
+}).superRefine((data, ctx) => {
+  if (data.ruleType === 'ASSIGN_NULL_PROJECT' && !data.config) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['config'],
+      message: 'config is required for ASSIGN_NULL_PROJECT',
+    });
+  }
+  if (!specialRuleDateRangeIsValid(data)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['effectiveEnd'],
+      message: 'effectiveEnd must be on or after effectiveStart',
+    });
+  }
 });
 
 /**
@@ -432,6 +471,7 @@ export const updateSpecialRuleSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   enabled: z.boolean().optional(),
   priority: z.number().int().min(0).max(9999).optional(),
+  config: nullProjectAttributionConfigSchema.optional(),
   // Match conditions
   matchSkuId: z.string().max(100).optional().nullable(),
   matchSkuGroupId: z.string().uuid().optional().nullable(),
@@ -444,4 +484,12 @@ export const updateSpecialRuleSchema = z.object({
   // Validity period
   effectiveStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional().nullable(),
   effectiveEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional().nullable(),
+}).superRefine((data, ctx) => {
+  if (!specialRuleDateRangeIsValid(data)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['effectiveEnd'],
+      message: 'effectiveEnd must be on or after effectiveStart',
+    });
+  }
 });

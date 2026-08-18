@@ -31,7 +31,8 @@
     "test:billing-sync-dispatch": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-billing-sync-dispatch.ts",
     "test:project-billing-import": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-project-billing-config-import.ts",
     "test:pricing-billing-scope": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-pricing-billing-account-scope.ts",
-    "test:monthly-override-basis": "ts-node -r tsconfig-paths/register --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-monthly-override-basis.ts"
+    "test:monthly-override-basis": "ts-node -r tsconfig-paths/register --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-monthly-override-basis.ts",
+    "test:null-project-attribution": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-null-project-attribution.ts"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^8.1.1",

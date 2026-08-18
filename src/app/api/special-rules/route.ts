@@ -13,6 +13,13 @@ import { prisma } from '@/lib/db';
 import { withPermission } from '@/lib/middleware';
 import { logSpecialRuleCreate } from '@/lib/audit';
 import {
+  groupNullProjectAttributionMappings,
+  NullProjectAttributionConfigError,
+  NullProjectAttributionConflictError,
+} from '@/lib/special-rules/null-project-attribution';
+import { prepareNullProjectAttributionMappings } from '@/lib/special-rules/null-project-attribution-store';
+import { Prisma, SpecialRuleType } from '@prisma/client';
+import {
   validateBody,
   createSpecialRuleSchema,
   paginationSchema,
@@ -56,7 +63,7 @@ export const GET = withPermission(
         deletedAt: null, // Exclude soft-deleted rules
         ...(customerIdParam ? { customerId: customerIdParam } : {}),
         ...(enabledParam !== null ? { enabled: enabledParam === 'true' } : {}),
-        ...(ruleTypeParam ? { ruleType: ruleTypeParam as 'EXCLUDE_SKU' | 'EXCLUDE_SKU_GROUP' | 'OVERRIDE_COST' | 'MOVE_TO_CUSTOMER' } : {}),
+        ...(ruleTypeParam ? { ruleType: ruleTypeParam as SpecialRuleType } : {}),
       };
 
       // Execute queries in parallel
@@ -86,6 +93,13 @@ export const GET = withPermission(
                 name: true,
               },
             },
+            nullProjectMappings: {
+              select: {
+                billingAccountId: true,
+                skuId: true,
+                projectId: true,
+              },
+            },
           },
         }),
         prisma.specialRule.count({ where }),
@@ -101,15 +115,17 @@ export const GET = withPermission(
         isActive: rule.enabled, // Alias for compatibility
         priority: rule.priority,
         ruleType: rule.ruleType,
-        config: {
-          matchSkuId: rule.matchSkuId,
-          matchSkuGroupId: rule.matchSkuGroupId,
-          matchServiceId: rule.matchServiceId,
-          matchProjectId: rule.matchProjectId,
-          matchBillingAccountId: rule.matchBillingAccountId,
-          costMultiplier: rule.costMultiplier?.toString() ?? null,
-          targetCustomerId: rule.targetCustomerId,
-        },
+        config: rule.ruleType === 'ASSIGN_NULL_PROJECT'
+          ? groupNullProjectAttributionMappings(rule.nullProjectMappings)
+          : {
+              matchSkuId: rule.matchSkuId,
+              matchSkuGroupId: rule.matchSkuGroupId,
+              matchServiceId: rule.matchServiceId,
+              matchProjectId: rule.matchProjectId,
+              matchBillingAccountId: rule.matchBillingAccountId,
+              costMultiplier: rule.costMultiplier?.toString() ?? null,
+              targetCustomerId: rule.targetCustomerId,
+            },
         matchSkuId: rule.matchSkuId,
         matchSkuGroup: rule.matchSkuGroup,
         matchServiceId: rule.matchServiceId,
@@ -193,40 +209,58 @@ export const POST = withPermission(
         }
       }
 
-      // Create global special rule (customerId = null)
-      const rule = await prisma.specialRule.create({
-        data: {
-          customerId: null, // Global rule
-          name: data.name,
-          enabled: data.enabled,
-          priority: data.priority,
-          ruleType: data.ruleType,
-          matchSkuId: data.matchSkuId || null,
-          matchSkuGroupId: data.matchSkuGroupId || null,
-          matchServiceId: data.matchServiceId || null,
-          matchProjectId: data.matchProjectId || null,
-          matchBillingAccountId: data.matchBillingAccountId || null,
-          costMultiplier: data.costMultiplier ?? null,
-          targetCustomerId: data.targetCustomerId || null,
-          effectiveStart: data.effectiveStart ? new Date(data.effectiveStart) : null,
-          effectiveEnd: data.effectiveEnd ? new Date(data.effectiveEnd) : null,
-        },
-        include: {
-          matchSkuGroup: {
-            select: {
-              id: true,
-              code: true,
-              name: true,
+      const effectiveStart = data.effectiveStart ? new Date(data.effectiveStart) : null;
+      const effectiveEnd = data.effectiveEnd ? new Date(data.effectiveEnd) : null;
+
+      // Create the rule and its exact mappings atomically. Serializable
+      // isolation makes the read-before-write conflict check concurrency safe.
+      const rule = await prisma.$transaction(async (tx) => {
+        const mappings = data.ruleType === 'ASSIGN_NULL_PROJECT'
+          ? await prepareNullProjectAttributionMappings(tx, {
+              config: data.config!,
+              effectiveStart,
+              effectiveEnd,
+              enforceConflicts: data.enabled,
+            })
+          : [];
+
+        return tx.specialRule.create({
+          data: {
+            customerId: null,
+            name: data.name,
+            enabled: data.enabled,
+            priority: data.priority,
+            ruleType: data.ruleType,
+            matchSkuId: data.matchSkuId || null,
+            matchSkuGroupId: data.matchSkuGroupId || null,
+            matchServiceId: data.matchServiceId || null,
+            matchProjectId: data.matchProjectId || null,
+            matchBillingAccountId: data.matchBillingAccountId || null,
+            costMultiplier: data.costMultiplier ?? null,
+            targetCustomerId: data.targetCustomerId || null,
+            effectiveStart,
+            effectiveEnd,
+            ...(mappings.length > 0
+              ? { nullProjectMappings: { create: mappings } }
+              : {}),
+          },
+          include: {
+            matchSkuGroup: {
+              select: { id: true, code: true, name: true },
+            },
+            targetCustomer: {
+              select: { id: true, name: true },
+            },
+            nullProjectMappings: {
+              select: {
+                billingAccountId: true,
+                skuId: true,
+                projectId: true,
+              },
             },
           },
-          targetCustomer: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-        },
-      });
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
       // Audit log
       await logSpecialRuleCreate(context, rule.id, null, {
@@ -239,6 +273,9 @@ export const POST = withPermission(
         matchServiceId: rule.matchServiceId,
         costMultiplier: rule.costMultiplier?.toString(),
         targetCustomerId: rule.targetCustomerId,
+        config: rule.ruleType === 'ASSIGN_NULL_PROJECT'
+          ? groupNullProjectAttributionMappings(rule.nullProjectMappings)
+          : null,
       });
 
       return created({
@@ -249,6 +286,9 @@ export const POST = withPermission(
         enabled: rule.enabled,
         priority: rule.priority,
         ruleType: rule.ruleType,
+        config: rule.ruleType === 'ASSIGN_NULL_PROJECT'
+          ? groupNullProjectAttributionMappings(rule.nullProjectMappings)
+          : null,
         matchSkuId: rule.matchSkuId,
         matchSkuGroup: rule.matchSkuGroup,
         matchServiceId: rule.matchServiceId,
@@ -262,6 +302,12 @@ export const POST = withPermission(
       });
 
     } catch (error) {
+      if (
+        error instanceof NullProjectAttributionConfigError
+        || error instanceof NullProjectAttributionConflictError
+      ) {
+        return badRequest(error.message, { code: 'ATTRIBUTION_CONFIG_INVALID' });
+      }
       console.error('Failed to create global special rule:', error);
       return serverError('Failed to create special rule');
     }

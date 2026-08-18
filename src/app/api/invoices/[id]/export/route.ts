@@ -28,6 +28,7 @@ import {
 } from '@/lib/invoice-presentation';
 import { createAuditLog } from '@/lib/audit/logger';
 import { AuditAction } from '@prisma/client';
+import { NullProjectAttributionConfigError } from '@/lib/special-rules/null-project-attribution';
 
 /**
  * GET /api/invoices/:id/export?format=csv|xlsx|pdf
@@ -186,6 +187,12 @@ export const GET = withPermissionAndScope(
         headers,
       });
     } catch (error) {
+      if (error instanceof NullProjectAttributionConfigError) {
+        return NextResponse.json(
+          { error: error.message, code: 'ATTRIBUTION_CONFIG_INVALID' },
+          { status: 409 }
+        );
+      }
       console.error('Export error:', error);
       return NextResponse.json(
         { error: 'Export failed', details: error instanceof Error ? error.message : 'Unknown error' },

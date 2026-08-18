@@ -225,8 +225,9 @@ model BillingAccount {
   updatedAt        DateTime             @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
-  projects              Project[]
-  projectBillingConfigs ProjectBillingConfig[]
+  projects                       Project[]
+  projectBillingConfigs          ProjectBillingConfig[]
+  specialRuleNullProjectMappings SpecialRuleNullProjectMapping[] @relation("SpecialRuleNullProjectBillingAccount")
 
   @@index([billingAccountId])
   @@index([status])
@@ -306,6 +307,7 @@ model ProjectBillingConfig {
   creator          User?             @relation("ProjectBillingConfigCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   updater          User?             @relation("ProjectBillingConfigUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
   customerProjects CustomerProject[]
+  specialRuleNullProjectMappings SpecialRuleNullProjectMapping[] @relation("SpecialRuleNullProjectTargetProject")
 
   @@index([billingAccountId])
   @@index([chargeType])
@@ -734,6 +736,7 @@ model ConfigSnapshot {
   // Relations
   customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Restrict)
   invoiceRuns InvoiceRun[]
+  invoices    Invoice[]
 
   @@index([customerId])
   @@index([createdAt])
@@ -817,9 +820,10 @@ enum InvoiceStatus {
 }
 
 model Invoice {
-  id           String @id @default(uuid()) @db.Uuid
-  invoiceRunId String @map("invoice_run_id") @db.Uuid
-  customerId   String @map("customer_id") @db.Uuid
+  id               String  @id @default(uuid()) @db.Uuid
+  invoiceRunId     String  @map("invoice_run_id") @db.Uuid
+  customerId       String  @map("customer_id") @db.Uuid
+  configSnapshotId String? @map("config_snapshot_id") @db.Uuid
 
   // Invoice identification
   invoiceNumber String        @unique @map("invoice_number") @db.VarChar(50)
@@ -854,6 +858,7 @@ model Invoice {
   // Relations
   invoiceRun          InvoiceRun        @relation(fields: [invoiceRunId], references: [id], onDelete: Restrict)
   customer            Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  configSnapshot      ConfigSnapshot?   @relation(fields: [configSnapshotId], references: [id], onDelete: Restrict)
   lineItems           InvoiceLineItem[]
   creditLedgerEntries CreditLedger[] // Phase 3.3
   exports             InvoiceExport[] // Phase 6: Export tracking
@@ -861,6 +866,7 @@ model Invoice {
 
   @@index([invoiceRunId])
   @@index([customerId])
+  @@index([configSnapshotId])
   @@index([invoiceNumber])
   @@index([billingMonth])
   @@index([status])
@@ -1199,6 +1205,7 @@ enum SpecialRuleType {
   EXCLUDE_SKU_GROUP // Exclude entire SKU group from billing
   OVERRIDE_COST // Override cost with multiplier (0 = free)
   MOVE_TO_CUSTOMER // Re-assign cost to target customer
+  ASSIGN_NULL_PROJECT // Attribute project-less Billing ID + SKU costs to a virtual project
 
   @@map("special_rule_type")
 }
@@ -1238,12 +1245,33 @@ model SpecialRule {
   targetCustomer      Customer?                 @relation("SpecialRuleTarget", fields: [targetCustomerId], references: [id], onDelete: Restrict)
   matchSkuGroup       SkuGroup?                 @relation(fields: [matchSkuGroupId], references: [id], onDelete: SetNull)
   effectLedgerEntries SpecialRuleEffectLedger[]
+  nullProjectMappings SpecialRuleNullProjectMapping[]
 
   @@index([customerId, enabled, priority])
   @@index([matchSkuGroupId])
   @@index([ruleType])
   @@index([deletedAt])
   @@map("special_rules")
+}
+
+/// Normalized entries for ASSIGN_NULL_PROJECT rules. The REST interface groups
+/// skuIds by Billing ID/project, while persistence keeps one exact match per row.
+model SpecialRuleNullProjectMapping {
+  id               String   @id @default(uuid()) @db.Uuid
+  specialRuleId    String   @map("special_rule_id") @db.Uuid
+  billingAccountId String   @map("billing_account_id") @db.VarChar(100)
+  skuId            String   @map("sku_id") @db.VarChar(100)
+  projectId        String   @map("project_id") @db.VarChar(100)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  specialRule   SpecialRule         @relation(fields: [specialRuleId], references: [id], onDelete: Cascade)
+  billingAccount BillingAccount      @relation("SpecialRuleNullProjectBillingAccount", fields: [billingAccountId], references: [billingAccountId], onDelete: Restrict, onUpdate: Cascade)
+  targetProject  ProjectBillingConfig @relation("SpecialRuleNullProjectTargetProject", fields: [projectId], references: [projectId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([specialRuleId, billingAccountId, skuId])
+  @@index([billingAccountId, skuId])
+  @@index([projectId])
+  @@map("special_rule_null_project_mappings")
 }
 
 /// Special rule effect ledger - tracks rule applications during invoice runs

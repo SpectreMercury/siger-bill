@@ -26,6 +26,7 @@ import {
   InvoiceStatus,
   Prisma,
   PrismaClient,
+  SpecialRuleType,
 } from '@prisma/client';
 import {
   applyPricingForCustomer,
@@ -45,7 +46,15 @@ import {
   captureSpecialRulesConfigSnapshot,
   attachSkuGroupsToEntries,
   type CostEntryForRules,
+  type RuleApplicationResult,
 } from '@/lib/special-rules';
+import {
+  loadNullProjectAttributionPlan,
+} from '@/lib/special-rules/null-project-attribution-store';
+import {
+  buildNullProjectAttributionPlan,
+  type NullProjectAttributionMapping,
+} from '@/lib/special-rules/null-project-attribution';
 import {
   type BillingSourceAdapter,
   type BillingLineItemDTO,
@@ -199,6 +208,37 @@ function lineItemToCostEntry(item: {
     usageStartTime: item.usageStartTime,
     usageEndTime: item.usageEndTime,
   };
+}
+
+function buildNullProjectAttributionEffects(
+  attributedRows: Array<{
+    mapping: NullProjectAttributionMapping;
+    projectId: string;
+    skuId: string;
+  }>
+): RuleApplicationResult[] {
+  const effectsByRule = new Map<string, RuleApplicationResult>();
+
+  for (const row of attributedRows) {
+    const effect = effectsByRule.get(row.mapping.ruleId) ?? {
+      ruleId: row.mapping.ruleId,
+      ruleName: row.mapping.ruleName,
+      ruleType: SpecialRuleType.ASSIGN_NULL_PROJECT,
+      affectedRowCount: 0,
+      costDelta: new Prisma.Decimal(0),
+      summary: { byProject: {}, bySku: {} },
+    };
+    effect.affectedRowCount += 1;
+    const project = effect.summary.byProject[row.projectId] ?? { count: 0, delta: '0' };
+    project.count += 1;
+    effect.summary.byProject[row.projectId] = project;
+    const sku = effect.summary.bySku[row.skuId] ?? { count: 0, delta: '0' };
+    sku.count += 1;
+    effect.summary.bySku[row.skuId] = sku;
+    effectsByRule.set(row.mapping.ruleId, effect);
+  }
+
+  return Array.from(effectsByRule.values());
 }
 
 /**
@@ -697,6 +737,9 @@ export async function executeUnifiedInvoiceRun(
 
     // Pre-load SKU group mappings
     const skuGroupMappings = await loadSkuGroupMappings();
+    const nullProjectAttributionPlan = options.sourceType === BillingSourceType.BIGQUERY_EXPORT
+      ? await loadNullProjectAttributionPlan(prisma, billingMonth)
+      : buildNullProjectAttributionPlan([]);
 
     // Build line item filter
     const lineItemFilter: Prisma.BillingLineItemWhereInput = {
@@ -749,18 +792,67 @@ export async function executeUnifiedInvoiceRun(
         // Get project IDs (these map to subaccountId in BillingLineItem)
         const projectIds = customer.customerProjects.map((cp) => cp.projectId);
         projectIds.forEach((p) => allSubaccountIds.add(p));
+        const customerAttributionMappings = nullProjectAttributionPlan.mappings.filter(
+          (mapping) => mapping.targetCustomerId === customer.id && projectIds.includes(mapping.projectId)
+        );
+        const attributionBillingAccountIds = Array.from(new Set(
+          customerAttributionMappings.map((mapping) => mapping.billingAccountId)
+        ));
+        const attributionSkuIds = Array.from(new Set(
+          customerAttributionMappings.map((mapping) => mapping.skuId)
+        ));
 
         const pricingBillingAccountIds = await loadActivePricingBillingAccountIds(customer.id);
 
         // Query BillingLineItem for this customer's projects
-        const lineItems = await prisma.billingLineItem.findMany({
+        const queriedLineItems = await prisma.billingLineItem.findMany({
           where: {
             ...lineItemFilter,
-            subaccountId: { in: projectIds },
+            OR: [
+              { subaccountId: { in: projectIds } },
+              ...(customerAttributionMappings.length > 0
+                ? [{
+                    provider: BillingProvider.GCP,
+                    sourceType: BillingSourceType.BIGQUERY_EXPORT,
+                    subaccountId: null,
+                    accountId: { in: attributionBillingAccountIds, mode: 'insensitive' as const },
+                    meterId: { in: attributionSkuIds },
+                  }]
+                : []),
+            ],
             ...(pricingBillingAccountIds.length > 0
               ? { accountId: { in: pricingBillingAccountIds } }
               : {}),
           },
+        });
+        const attributedRows: Array<{
+          mapping: NullProjectAttributionMapping;
+          projectId: string;
+          skuId: string;
+        }> = [];
+        const lineItems = queriedLineItems.flatMap((item) => {
+          if (item.subaccountId !== null) return [item];
+          if (
+            item.provider !== BillingProvider.GCP
+            || item.sourceType !== BillingSourceType.BIGQUERY_EXPORT
+          ) {
+            return [];
+          }
+
+          const resolution = nullProjectAttributionPlan.resolve({
+            billingAccountId: item.accountId,
+            skuId: item.meterId,
+            projectId: null,
+          });
+          const mapping = customerAttributionMappings.find(
+            (candidate) => candidate.ruleId === resolution?.ruleId
+              && candidate.billingAccountId === item.accountId.trim().toUpperCase()
+              && candidate.skuId === item.meterId
+          );
+          if (!resolution || !mapping || resolution.targetCustomerId !== customer.id) return [];
+
+          attributedRows.push({ mapping, projectId: resolution.projectId, skuId: item.meterId });
+          return [{ ...item, subaccountId: resolution.projectId }];
         });
 
         if (lineItems.length === 0) {
@@ -795,6 +887,8 @@ export async function executeUnifiedInvoiceRun(
 
         // Attach SKU groups
         const entriesWithGroups = attachSkuGroupsToEntries(entriesForRules, skuGroupMappings);
+
+        const attributionRuleResults = buildNullProjectAttributionEffects(attributedRows);
 
         // Apply special rules
         const specialRules = await loadApplicableSpecialRules(customer.id, billingMonth);
@@ -889,6 +983,7 @@ export async function executeUnifiedInvoiceRun(
             config: {
               provider: options.provider,
               sourceType: options.sourceType,
+              nullProjectAttribution: customerAttributionMappings,
               specialRules: specialRulesSnapshot,
               specialRulesApplied: specialRulesResult.rulesApplied,
               pricing: pricingSnapshot,
@@ -896,7 +991,7 @@ export async function executeUnifiedInvoiceRun(
               billingMonth,
               capturedAt: new Date().toISOString(),
             } as unknown as Prisma.InputJsonValue,
-            version: 1,
+            version: 2,
           },
         });
 
@@ -913,6 +1008,7 @@ export async function executeUnifiedInvoiceRun(
             data: {
               invoiceRunId,
               customerId: customer.id,
+              configSnapshotId: configSnapshot.id,
               billingMonth,
               invoiceNumber,
               status: InvoiceStatus.DRAFT,
@@ -1008,6 +1104,12 @@ export async function executeUnifiedInvoiceRun(
               } as unknown as Prisma.InputJsonValue,
             },
           });
+        }
+
+        if (attributionRuleResults.length > 0) {
+          await recordSpecialRuleEffects(invoiceRunId, attributionRuleResults);
+          specialRulesApplied = true;
+          specialRulesCount += attributionRuleResults.length;
         }
 
         await prisma.invoiceRun.update({

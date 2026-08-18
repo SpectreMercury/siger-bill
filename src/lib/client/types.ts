@@ -144,16 +144,42 @@ export interface Credit {
   updatedAt: string;
 }
 
+export type SpecialRuleType =
+  | 'EXCLUDE_SKU'
+  | 'EXCLUDE_SKU_GROUP'
+  | 'OVERRIDE_COST'
+  | 'MOVE_TO_CUSTOMER'
+  | 'ASSIGN_NULL_PROJECT';
+
+export interface NullProjectAttributionConfigItem {
+  billingAccountId: string;
+  skuIds: string[];
+  projectId: string;
+}
+
 export interface SpecialRule {
   id: string;
-  customerId: string;
+  customerId: string | null;
+  customer?: { id: string; name: string } | null;
   name: string;
-  ruleType: string;
-  config: Record<string, unknown>;
-  effectiveFrom: string;
+  ruleType: SpecialRuleType;
+  config: Record<string, unknown> | NullProjectAttributionConfigItem[] | null;
+  enabled: boolean;
+  effectiveFrom: string | null;
   effectiveTo: string | null;
+  effectiveStart: string | null;
+  effectiveEnd: string | null;
   priority: number;
   isActive: boolean;
+  matchSkuId: string | null;
+  matchSkuGroupId?: string | null;
+  matchSkuGroup?: { id: string; code: string; name: string } | null;
+  matchServiceId: string | null;
+  matchProjectId: string | null;
+  matchBillingAccountId: string | null;
+  costMultiplier: string | null;
+  targetCustomerId?: string | null;
+  targetCustomer?: { id: string; name: string } | null;
 }
 
 export interface DashboardOverview {

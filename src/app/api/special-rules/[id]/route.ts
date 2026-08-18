@@ -14,6 +14,13 @@ import { withPermission } from '@/lib/middleware';
 import { hasCustomerScope } from '@/lib/auth/context';
 import { logSpecialRuleUpdate, logSpecialRuleDelete } from '@/lib/audit';
 import {
+  groupNullProjectAttributionMappings,
+  NullProjectAttributionConfigError,
+  NullProjectAttributionConflictError,
+} from '@/lib/special-rules/null-project-attribution';
+import { prepareNullProjectAttributionMappings } from '@/lib/special-rules/null-project-attribution-store';
+import { Prisma } from '@prisma/client';
+import {
   validateBody,
   updateSpecialRuleSchema,
   validationError,
@@ -73,6 +80,13 @@ export const GET = withPermission(
               },
             },
           },
+          nullProjectMappings: {
+            select: {
+              billingAccountId: true,
+              skuId: true,
+              projectId: true,
+            },
+          },
         },
       });
 
@@ -111,6 +125,9 @@ export const GET = withPermission(
         enabled: rule.enabled,
         priority: rule.priority,
         ruleType: rule.ruleType,
+        config: rule.ruleType === 'ASSIGN_NULL_PROJECT'
+          ? groupNullProjectAttributionMappings(rule.nullProjectMappings)
+          : null,
         matchSkuId: rule.matchSkuId,
         matchSkuGroup: rule.matchSkuGroup,
         matchServiceId: rule.matchServiceId,
@@ -147,6 +164,15 @@ export const PATCH = withPermission(
       // Fetch existing rule
       const existingRule = await prisma.specialRule.findUnique({
         where: { id: ruleId, deletedAt: null },
+        include: {
+          nullProjectMappings: {
+            select: {
+              billingAccountId: true,
+              skuId: true,
+              projectId: true,
+            },
+          },
+        },
       });
 
       if (!existingRule) {
@@ -171,6 +197,24 @@ export const PATCH = withPermission(
       }
 
       const data = validation.data;
+
+      if (existingRule.ruleType !== 'ASSIGN_NULL_PROJECT' && data.config) {
+        return badRequest('config is only supported for ASSIGN_NULL_PROJECT rules');
+      }
+
+      const nextEffectiveStart = data.effectiveStart !== undefined
+        ? (data.effectiveStart ? new Date(data.effectiveStart) : null)
+        : existingRule.effectiveStart;
+      const nextEffectiveEnd = data.effectiveEnd !== undefined
+        ? (data.effectiveEnd ? new Date(data.effectiveEnd) : null)
+        : existingRule.effectiveEnd;
+      if (
+        nextEffectiveStart
+        && nextEffectiveEnd
+        && nextEffectiveStart > nextEffectiveEnd
+      ) {
+        return badRequest('effectiveEnd must be on or after effectiveStart');
+      }
 
       // Validate target customer if being changed
       if (data.targetCustomerId !== undefined && data.targetCustomerId !== null) {
@@ -225,40 +269,82 @@ export const PATCH = withPermission(
         }
       }
 
+      const updatesAttributionMappings = existingRule.ruleType === 'ASSIGN_NULL_PROJECT'
+        && data.config !== undefined;
+      const nextAttributionEnabled = data.enabled ?? existingRule.enabled;
+      const shouldValidateAttribution = existingRule.ruleType === 'ASSIGN_NULL_PROJECT'
+        && (
+          updatesAttributionMappings
+          || (
+            nextAttributionEnabled
+            && (
+              data.enabled === true
+              || data.effectiveStart !== undefined
+              || data.effectiveEnd !== undefined
+            )
+          )
+        );
+
       // Nothing to update
-      if (Object.keys(updateData).length === 0) {
+      if (Object.keys(updateData).length === 0 && !updatesAttributionMappings) {
         return success({
           id: existingRule.id,
           message: 'No changes made',
         });
       }
 
-      // Update rule
-      const updatedRule = await prisma.specialRule.update({
-        where: { id: ruleId },
-        data: updateData,
-        include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
+      const updatedRule = await prisma.$transaction(async (tx) => {
+        let mappings: Array<{
+          billingAccountId: string;
+          skuId: string;
+          projectId: string;
+        }> | null = null;
+
+        if (shouldValidateAttribution) {
+          const config = data.config
+            ?? groupNullProjectAttributionMappings(existingRule.nullProjectMappings);
+          mappings = await prepareNullProjectAttributionMappings(tx, {
+            config,
+            effectiveStart: nextEffectiveStart,
+            effectiveEnd: nextEffectiveEnd,
+            excludeRuleId: ruleId,
+            enforceConflicts: nextAttributionEnabled,
+          });
+        }
+
+        if (updatesAttributionMappings) {
+          await tx.specialRuleNullProjectMapping.deleteMany({
+            where: { specialRuleId: ruleId },
+          });
+        }
+
+        return tx.specialRule.update({
+          where: { id: ruleId },
+          data: {
+            ...updateData,
+            ...(updatesAttributionMappings && mappings
+              ? { nullProjectMappings: { create: mappings } }
+              : {}),
+          },
+          include: {
+            customer: { select: { id: true, name: true } },
+            matchSkuGroup: { select: { id: true, code: true, name: true } },
+            targetCustomer: { select: { id: true, name: true } },
+            nullProjectMappings: {
+              select: {
+                billingAccountId: true,
+                skuId: true,
+                projectId: true,
+              },
             },
           },
-          matchSkuGroup: {
-            select: {
-              id: true,
-              code: true,
-              name: true,
-            },
-          },
-          targetCustomer: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-        },
-      });
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+      if (updatesAttributionMappings) {
+        beforeData.config = groupNullProjectAttributionMappings(existingRule.nullProjectMappings);
+        afterData.config = data.config;
+      }
 
       // Audit log
       await logSpecialRuleUpdate(context, ruleId, beforeData, afterData);
@@ -272,6 +358,9 @@ export const PATCH = withPermission(
         enabled: updatedRule.enabled,
         priority: updatedRule.priority,
         ruleType: updatedRule.ruleType,
+        config: updatedRule.ruleType === 'ASSIGN_NULL_PROJECT'
+          ? groupNullProjectAttributionMappings(updatedRule.nullProjectMappings)
+          : null,
         matchSkuId: updatedRule.matchSkuId,
         matchSkuGroup: updatedRule.matchSkuGroup,
         matchServiceId: updatedRule.matchServiceId,
@@ -285,6 +374,12 @@ export const PATCH = withPermission(
       });
 
     } catch (error) {
+      if (
+        error instanceof NullProjectAttributionConfigError
+        || error instanceof NullProjectAttributionConflictError
+      ) {
+        return badRequest(error.message, { code: 'ATTRIBUTION_CONFIG_INVALID' });
+      }
       console.error('Failed to update special rule:', error);
       return serverError('Failed to update special rule');
     }

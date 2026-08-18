@@ -23,6 +23,7 @@ import {
   buildMonthlyBillingExportContentDisposition,
   buildMonthlyBillingExportFilename,
 } from '@/lib/billing/monthly-export';
+import { NullProjectAttributionConfigError } from '@/lib/special-rules/null-project-attribution';
 
 export const GET = withPermission(
   { resource: 'raw_cost', action: 'list' },
@@ -72,6 +73,16 @@ export const GET = withPermission(
 
       return new NextResponse(new Uint8Array(content), { status: 200, headers });
     } catch (error) {
+      if (error instanceof NullProjectAttributionConfigError) {
+        return NextResponse.json(
+          {
+            error: error.message,
+            code: 'ATTRIBUTION_CONFIG_INVALID',
+            timestamp: new Date().toISOString(),
+          },
+          { status: 409 }
+        );
+      }
       if (error instanceof MonthlyBillingCustomerSelectionError) {
         return badRequest('该月份存在全月 Override，请先选择单个客户');
       }

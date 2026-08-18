@@ -32,6 +32,11 @@ import {
 } from '@/lib/billing/monthly-template-calculation';
 import { ACTIVE_PRICING_LIST_ORDER } from '@/lib/pricing/active-list';
 import { matchesPricingBillingAccount } from '@/lib/pricing/billing-account-scope';
+import {
+  buildNullProjectAttributionPlan,
+  type NullProjectAttributionMapping,
+} from '@/lib/special-rules/null-project-attribution';
+import { loadNullProjectAttributionPlan } from '@/lib/special-rules/null-project-attribution-store';
 import { InvoicePresentation, ExportResult, ExportOptions, CreditBreakdown, PricingBreakdown } from '../types';
 import { generateContentHash } from '../builder';
 
@@ -67,6 +72,40 @@ type MonthlyProviderCreditAllocation = {
   amount: Prisma.Decimal;
   convertedAmount: Prisma.Decimal | null;
 };
+
+function snapshotNullProjectAttributionMappings(
+  config: Prisma.JsonValue | null | undefined
+): NullProjectAttributionMapping[] {
+  if (config === null || config === undefined) return [];
+  if (Array.isArray(config) || typeof config !== 'object') return [];
+
+  const value = (config as Prisma.JsonObject).nullProjectAttribution;
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((candidate) => {
+    if (candidate === null || Array.isArray(candidate) || typeof candidate !== 'object') return [];
+    const mapping = candidate as Prisma.JsonObject;
+    if (
+      typeof mapping.ruleId !== 'string'
+      || typeof mapping.ruleName !== 'string'
+      || typeof mapping.billingAccountId !== 'string'
+      || typeof mapping.skuId !== 'string'
+      || typeof mapping.projectId !== 'string'
+    ) {
+      return [];
+    }
+    return [{
+      ruleId: mapping.ruleId,
+      ruleName: mapping.ruleName,
+      billingAccountId: mapping.billingAccountId,
+      skuId: mapping.skuId,
+      projectId: mapping.projectId,
+      ...(typeof mapping.targetCustomerId === 'string'
+        ? { targetCustomerId: mapping.targetCustomerId }
+        : {}),
+    }];
+  });
+}
 
 function formatDate(date: Date): string {
   return date.toISOString().split('T')[0];
@@ -162,15 +201,30 @@ async function loadSkuGroupMappingsForSkuIds(skuIds: string[]): Promise<Map<stri
 async function loadMergedBillingGroups(params: {
   billingMonth: string;
   projectIds: string[];
+  attributionMappings?: NullProjectAttributionMapping[];
 }): Promise<MonthlyBillingGroup[]> {
   if (params.projectIds.length === 0) return [];
+
+  const attributionPlan = params.attributionMappings
+    ? buildNullProjectAttributionPlan(params.attributionMappings)
+    : await loadNullProjectAttributionPlan(prisma, params.billingMonth);
+  const selectedProjectIds = new Set(params.projectIds);
+  const attributionRows = JSON.stringify(
+    attributionPlan.mappings
+      .filter((mapping) => selectedProjectIds.has(mapping.projectId))
+      .map((mapping) => ({
+        billing_account_id: mapping.billingAccountId,
+        sku_id: mapping.skuId,
+        project_id: mapping.projectId,
+      }))
+  );
 
   const groups = await prisma.$queryRaw<MonthlyBillingGroup[]>(Prisma.sql`
     SELECT
       MIN(line.id::text) AS "id",
       line.account_id AS "accountId",
       MAX(line.billing_account_name) AS "billingAccountName",
-      line.subaccount_id AS "subaccountId",
+      COALESCE(line.subaccount_id, attribution.project_id) AS "subaccountId",
       MAX(line.project_name) AS "projectName",
       line.product_id AS "productId",
       MAX(line.service_description) AS "serviceDescription",
@@ -222,19 +276,30 @@ async function loadMergedBillingGroups(params: {
     FROM billing_line_items line
     JOIN billing_ingestion_batches batch
       ON batch.id = line.ingestion_batch_id
+    LEFT JOIN jsonb_to_recordset(${attributionRows}::jsonb) AS attribution(
+      billing_account_id text,
+      sku_id text,
+      project_id text
+    )
+      ON line.subaccount_id IS NULL
+      AND attribution.billing_account_id = UPPER(BTRIM(line.account_id))
+      AND attribution.sku_id = line.meter_id
     WHERE line.provider = 'GCP'::billing_provider
       AND line.source_type = 'BIGQUERY_EXPORT'::billing_source_type
       AND line.invoice_month = ${params.billingMonth}
-      AND line.subaccount_id IN (${Prisma.join(params.projectIds)})
+      AND (
+        line.subaccount_id IN (${Prisma.join(params.projectIds)})
+        OR attribution.project_id IN (${Prisma.join(params.projectIds)})
+      )
       AND batch.is_active = true
     GROUP BY
       line.account_id,
-      line.subaccount_id,
+      COALESCE(line.subaccount_id, attribution.project_id),
       line.product_id,
       line.meter_id
     ORDER BY
       MIN(line.usage_start_time),
-      line.subaccount_id,
+      COALESCE(line.subaccount_id, attribution.project_id),
       line.product_id,
       line.meter_id,
       line.account_id
@@ -243,7 +308,7 @@ async function loadMergedBillingGroups(params: {
   const breakdownRows = await prisma.$queryRaw<MonthlyCreditBreakdownQueryRow[]>(Prisma.sql`
     SELECT
       line.account_id AS "accountId",
-      line.subaccount_id AS "subaccountId",
+      COALESCE(line.subaccount_id, attribution.project_id) AS "subaccountId",
       line.product_id AS "productId",
       line.meter_id AS "meterId",
       credit.value->>'type' AS "type",
@@ -259,6 +324,14 @@ async function loadMergedBillingGroups(params: {
     FROM billing_line_items line
     JOIN billing_ingestion_batches batch
       ON batch.id = line.ingestion_batch_id
+    LEFT JOIN jsonb_to_recordset(${attributionRows}::jsonb) AS attribution(
+      billing_account_id text,
+      sku_id text,
+      project_id text
+    )
+      ON line.subaccount_id IS NULL
+      AND attribution.billing_account_id = UPPER(BTRIM(line.account_id))
+      AND attribution.sku_id = line.meter_id
     CROSS JOIN LATERAL jsonb_array_elements(
       CASE
         WHEN jsonb_typeof(line.credit_breakdown) = 'array' THEN line.credit_breakdown
@@ -268,18 +341,21 @@ async function loadMergedBillingGroups(params: {
     WHERE line.provider = 'GCP'::billing_provider
       AND line.source_type = 'BIGQUERY_EXPORT'::billing_source_type
       AND line.invoice_month = ${params.billingMonth}
-      AND line.subaccount_id IN (${Prisma.join(params.projectIds)})
+      AND (
+        line.subaccount_id IN (${Prisma.join(params.projectIds)})
+        OR attribution.project_id IN (${Prisma.join(params.projectIds)})
+      )
       AND batch.is_active = true
       AND credit.value ? 'type'
       AND credit.value ? 'amount'
     GROUP BY
       line.account_id,
-      line.subaccount_id,
+      COALESCE(line.subaccount_id, attribution.project_id),
       line.product_id,
       line.meter_id,
       credit.value->>'type'
     ORDER BY
-      line.subaccount_id,
+      COALESCE(line.subaccount_id, attribution.project_id),
       line.product_id,
       line.meter_id,
       line.account_id,
@@ -311,6 +387,7 @@ async function buildBillingTemplateRows(invoiceId: string): Promise<{
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: {
+      configSnapshot: true,
       customer: {
         include: {
           customerProjects: {
@@ -338,13 +415,21 @@ async function buildBillingTemplateRows(invoiceId: string): Promise<{
   const [year, month] = invoice.billingMonth.split('-').map(Number);
   const monthStart = new Date(Date.UTC(year, month - 1, 1));
   const monthEnd = new Date(Date.UTC(year, month, 1));
-  const activeProjectIds = invoice.customer.customerProjects.map(
-    (binding) => binding.projectId
+  const snapshotAttributionMappings = snapshotNullProjectAttributionMappings(
+    invoice.configSnapshot?.config
   );
+  const snapshotProjectIds = snapshotAttributionMappings.map((mapping) => mapping.projectId);
+  const activeProjectIds = Array.from(new Set([
+    ...invoice.customer.customerProjects.map(
+    (binding) => binding.projectId
+    ),
+    ...snapshotProjectIds,
+  ]));
 
   const loadedLineItems = await loadMergedBillingGroups({
     billingMonth: invoice.billingMonth,
     projectIds: activeProjectIds,
+    attributionMappings: snapshotAttributionMappings,
   });
 
   const projectConfigs = await prisma.projectBillingConfig.findMany({

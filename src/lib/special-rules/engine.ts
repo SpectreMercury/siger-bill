@@ -144,6 +144,7 @@ export async function loadApplicableSpecialRules(
         // Enabled and not deleted
         { enabled: true },
         { deletedAt: null },
+        { ruleType: { not: 'ASSIGN_NULL_PROJECT' } },
         // Effective date filtering: rule validity overlaps with billing month
         {
           OR: [

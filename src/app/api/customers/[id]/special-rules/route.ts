@@ -23,6 +23,7 @@ import {
   notFound,
   badRequest,
 } from '@/lib/utils';
+import { SpecialRuleType } from '@prisma/client';
 
 /**
  * GET /api/customers/:id/special-rules
@@ -64,7 +65,7 @@ export const GET = withPermissionAndScope(
         customerId,
         deletedAt: null, // Exclude soft-deleted rules
         ...(enabledParam !== null ? { enabled: enabledParam === 'true' } : {}),
-        ...(ruleTypeParam ? { ruleType: ruleTypeParam as 'EXCLUDE_SKU' | 'EXCLUDE_SKU_GROUP' | 'OVERRIDE_COST' | 'MOVE_TO_CUSTOMER' } : {}),
+        ...(ruleTypeParam ? { ruleType: ruleTypeParam as SpecialRuleType } : {}),
       };
 
       // Execute queries in parallel
@@ -159,6 +160,10 @@ export const POST = withPermissionAndScope(
       }
 
       const data = validation.data;
+
+      if (data.ruleType === 'ASSIGN_NULL_PROJECT') {
+        return badRequest('ASSIGN_NULL_PROJECT rules must be global');
+      }
 
       // Validate rule-specific requirements
       if (data.ruleType === 'OVERRIDE_COST' && data.costMultiplier === undefined) {
