@@ -53,3 +53,6 @@ yarn-error.log*
 
 # Local production database snapshots
 /backups/
+
+# Local git worktrees
+/.worktrees/
